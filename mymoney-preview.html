@@ -49,12 +49,12 @@
     .chart-center span { display:block; font-size:10px; color:var(--muted); margin-top:3px; }
     .cat-orbit { position:absolute; z-index:2; width:42px; height:42px; display:grid; place-items:center; border:3px solid var(--surface-2); border-radius:15px; font-size:18px; cursor:pointer; box-shadow:0 5px 14px rgba(38,42,36,.1); transition:transform .2s,filter .2s; }
     .cat-orbit:hover { transform:scale(1.12) rotate(-5deg); }
-    .cat-orbit[data-cat="Food"] { top:1px; left:50%; transform:translateX(-50%); background:#ffe3bd; }
-    .cat-orbit[data-cat="Transport"] { top:56px; right:0; background:#dfe5ff; }
-    .cat-orbit[data-cat="Shopping"] { bottom:30px; right:13px; background:#f9dbe7; }
-    .cat-orbit[data-cat="Home"] { bottom:2px; left:50%; transform:translateX(-50%); background:#e6e2ff; }
-    .cat-orbit[data-cat="Health"] { bottom:30px; left:13px; background:#d8f0e5; }
-    .cat-orbit[data-cat="Other"] { top:56px; left:0; background:#ffefbd; }
+    .cat-orbit[data-category="Food"] { top:1px; left:50%; transform:translateX(-50%); background:#ffe3bd; }
+    .cat-orbit[data-category="Transport"] { top:56px; right:0; background:#dfe5ff; }
+    .cat-orbit[data-category="Shopping"] { bottom:30px; right:13px; background:#f9dbe7; }
+    .cat-orbit[data-category="Home"] { bottom:2px; left:50%; transform:translateX(-50%); background:#e6e2ff; }
+    .cat-orbit[data-category="Health"] { bottom:30px; left:13px; background:#d8f0e5; }
+    .cat-orbit[data-category="Other"] { top:56px; left:0; background:#ffefbd; }
     .ring-caption { text-align:center; color:var(--muted); font-size:10px; margin-top:-1px; }
     .ring-caption b { color:var(--text); font-size:11px; }
     .flow-row { display:grid; grid-template-columns:1fr 1fr; gap:11px; margin-top:14px; }
@@ -127,7 +127,7 @@
     body.dark .type-switch button.active[data-type="expense"] { background:#49312d; color:#f0a391; } body.dark .type-switch button.active[data-type="income"] { background:#293d30; color:#a6d4b0; }
     body.dark .account-emblem { background:#293d30; }
     @media (max-width:500px) { body { display:block; background:var(--surface-2); } .phone { width:100vw; height:100dvh; min-height:550px; border:0; border-radius:0; box-shadow:none; } }
-    @media (max-height:760px) { .chart-area { height:220px; } .chart-ring { width:172px; height:172px; } .chart-ring:after { inset:16px; } .cat-orbit[data-cat="Shopping"],.cat-orbit[data-cat="Health"] { bottom:21px; } .cat-orbit[data-cat="Home"] { bottom:-1px; } .flow-row { margin-top:8px; } .summary { margin-top:10px; } }
+    @media (max-height:760px) { .chart-area { height:220px; } .chart-ring { width:172px; height:172px; } .chart-ring:after { inset:16px; } .cat-orbit[data-category="Shopping"],.cat-orbit[data-category="Health"] { bottom:21px; } .cat-orbit[data-category="Home"] { bottom:-1px; } .flow-row { margin-top:8px; } .summary { margin-top:10px; } }
   </style>
 </head>
 <body>
@@ -172,13 +172,13 @@
         {id:7,title:"Pharmacy",category:"Health",amount:18.40,type:"expense",account:"Cash wallet",date:dayAgo(5)},
         {id:8,title:"Coffee with Mia",category:"Food",amount:9.80,type:"expense",account:"Everyday",date:dayAgo(6)}
       ];
-      let selectedAccount="Everyday", currentScreen="home", transactionType="expense", selectedCategory="Food", amountInput="", historyFilter="all", toastTimer;
+      let selectedAccount="Everyday", currentScreen="home", transactionType="expense", selectedCategory="Food", amountInput="", historyFilter="all", monthOffset=0, toastTimer;
       const screen=document.getElementById("screen"), nav=document.getElementById("bottomNav"), sheet=document.getElementById("transactionSheet"), shade=document.getElementById("shade");
       const money=n => (window.currency==="LKR" ? "Rs " : window.currency==="INR" ? "₹" : window.currency==="EUR" ? "€" : window.currency==="GBP" ? "£" : window.currency==="AUD" ? "A$" : "$")+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
       const categoryInfo=name=>categories.find(c=>c.name===name)||categories[5];
-      const monthName=now.toLocaleDateString("en-US",{month:"long",year:"numeric"});
       const navItems=[["home","⌂","Home"],["history","◷","History"],["add","+","Add"],["accounts","▣","Accounts"],["settings","⚙","Settings"]];
-      function monthItems(){return transactions.filter(t=>new Date(t.date).getMonth()===now.getMonth()&&new Date(t.date).getFullYear()===now.getFullYear());}
+      function visibleMonth(){return new Date(now.getFullYear(),now.getMonth()+monthOffset,1);}
+      function monthItems(){const month=visibleMonth();return transactions.filter(t=>new Date(t.date).getMonth()===month.getMonth()&&new Date(t.date).getFullYear()===month.getFullYear());}
       function accountBalance(name){const a=accounts.find(x=>x.name===name);return Math.max(0,(a?a.balance:0)+transactions.filter(t=>t.account===name).reduce((s,t)=>s+(t.type==="income"?t.amount:-t.amount),0));}
       function totals(items){return items.reduce((t,x)=>{t[x.type]+=x.amount;return t;},{income:0,expense:0});}
       function renderNav(){nav.innerHTML=navItems.map(([id,icon,label])=>id==="add"?`<button class="nav-add" data-nav="add" aria-label="Add transaction">+</button>`:`<button class="nav-item ${currentScreen===id?"active":""}" data-nav="${id}"><span class="nav-icon">${icon}</span><span>${label}</span></button>`).join("");}
@@ -186,16 +186,16 @@
       function homeView(){
         const items=monthItems(),t=totals(items),spend=categories.map(c=>({...c,total:items.filter(x=>x.type==="expense"&&x.category===c.name).reduce((s,x)=>s+x.amount,0)})).filter(x=>x.total>0);
         let cursor=0;const conic=t.expense?spend.map(c=>{const start=cursor;cursor+=c.total/t.expense*360;return `${c.color} ${start.toFixed(1)}deg ${cursor.toFixed(1)}deg`;}).join(", "):"#e8e9e5 0deg 360deg";
-        const recent=[...transactions].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,4),account=accounts.find(a=>a.name===selectedAccount);
+        const recent=[...items].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,4),account=accounts.find(a=>a.name===selectedAccount);
         return `<div class="topline"><div class="brand"><span class="brand-mark">↗</span>my<span style="color:var(--green-dark)">money</span></div><button class="icon-btn" data-action="account-shortcut" aria-label="Choose account">${account?account.icon:"💳"}</button></div>
-        <div class="month-line"><button data-action="previous-month" aria-label="Previous month">‹</button><span>${monthName}</span><button data-action="next-month" aria-label="Next month">›</button></div>
+        <div class="month-line"><button data-action="previous-month" aria-label="Previous month">‹</button><span>${visibleMonth().toLocaleDateString("en-US",{month:"long",year:"numeric"})}</span><button data-action="next-month" aria-label="Next month">›</button></div>
         <div class="summary"><div class="summary-label">Monthly balance</div><div class="balance">${money(t.income-t.expense)}</div><div class="account-caption">in <button data-action="account-shortcut">${escapeHtml(selectedAccount)}</button> · total available ${money(accountBalance(selectedAccount))}</div></div>
         <div class="chart-area"><div class="chart-ring" style="background:conic-gradient(${conic})"></div><div class="chart-center"><small>Spent this month</small><strong>${money(t.expense)}</strong><span>${t.income?Math.round(t.expense/t.income*100):0}% of income</span></div>
         ${categories.slice(0,6).map(c=>`<button class="cat-orbit" data-category="${c.name}" title="Add ${c.name} expense">${c.icon}</button>`).join("")}</div>
         <div class="ring-caption"><b>${money(t.expense)}</b> spent <span style="margin:0 5px">·</span> <b style="color:var(--green-dark)">${money(t.income)}</b> received</div>
         <div class="flow-row"><button class="flow-btn expense" data-action="add-expense"><span>↘</span> Expense</button><button class="flow-btn income" data-action="add-income"><span>↗</span> Income</button></div>
         <div class="section-head"><h2>Recent activity</h2><button data-nav="history">See all&nbsp; →</button></div>
-        <div class="transaction-list">${recent.map(transactionRow).join("")||`<div class="empty-state">No transactions yet. Add your first one ✨</div>`}</div>`;
+        <div class="transaction-list">${recent.map(transactionRow).join("")||`<div class="empty-state">No activity for this month yet ✨</div>`}</div>`;
       }
       function transactionRow(t){const cat=categoryInfo(t.category),d=new Date(t.date),when=d.toDateString()===new Date().toDateString()?"Today":d.toLocaleDateString("en-US",{month:"short",day:"numeric"});
         return `<div class="transaction"><div class="tx-icon" style="background:${cat.tint}">${cat.icon}</div><div class="tx-info"><div class="tx-title">${escapeHtml(t.title)}</div><div class="tx-sub">${escapeHtml(t.category)} · ${when}</div></div><div class="tx-amount ${t.type==="income"?"in":"out"}">${t.type==="income"?"+":"−"}${money(t.amount)}</div></div>`;}
@@ -232,6 +232,8 @@
         if(target.dataset.nav){if(target.dataset.nav==="add")openSheet("expense");else{currentScreen=target.dataset.nav;render();}return;}
         if(target.dataset.action){const action=target.dataset.action;
           if(action==="add-expense")openSheet("expense");else if(action==="add-income")openSheet("income");else if(action==="account-shortcut"){currentScreen="accounts";render();}
+          else if(action==="previous-month"){monthOffset--;render();}
+          else if(action==="next-month"){monthOffset++;render();}
           else if(action==="theme"){document.body.classList.toggle("dark");render();}
           else if(action==="reminder"){target.classList.toggle("on");showToast(target.classList.contains("on")?"Daily reminder is on":"Daily reminder is off");}
           else if(action==="currency"){const list=["USD","EUR","GBP","LKR","INR","AUD"],next=list[(list.indexOf(window.currency||"USD")+1)%list.length];window.currency=next;render();showToast(`Currency changed to ${next}`);}
@@ -249,7 +251,7 @@
       document.getElementById("saveTransaction").addEventListener("click",()=>{const amount=Number(amountInput);if(!Number.isFinite(amount)||amount<=0){showToast("Enter an amount to continue");return;}
         const note=document.getElementById("noteInput").value.trim(),account=document.getElementById("transactionAccount").value,cat=categoryInfo(selectedCategory);
         transactions.unshift({id:Date.now(),title:note||selectedCategory,category:selectedCategory,amount,type:transactionType,account,date:new Date().toISOString()});
-        selectedAccount=account;closeSheet();currentScreen="home";render();showToast(`${transactionType==="expense"?"Expense":"Income"} added ${cat.icon}`);});
+        selectedAccount=account;monthOffset=0;closeSheet();currentScreen="home";render();showToast(`${transactionType==="expense"?"Expense":"Income"} added ${cat.icon}`);});
       document.getElementById("closeSheet").addEventListener("click",closeSheet);shade.addEventListener("click",closeSheet);
       document.addEventListener("keydown",event=>{if(event.key==="Escape")closeSheet();if(!sheet.classList.contains("open"))return;if(/^\d$/.test(event.key)||event.key===".")pressKey(event.key);if(event.key==="Backspace")pressKey("⌫");if(event.key==="Enter")document.getElementById("saveTransaction").click();});
       function exportCsv(){const rows=[["Date","Description","Category","Type","Account","Amount"],...transactions.map(t=>[new Date(t.date).toLocaleDateString(),t.title,t.category,t.type,t.account,t.amount])];
