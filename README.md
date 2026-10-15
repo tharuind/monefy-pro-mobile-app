@@ -10,11 +10,12 @@
 
 - Android Flutter material-3 interface with income/expense add, edit, delete.
 - Category donut chart, month filter, account filter, running balance.
-- On-device SQLite (no backend, no account registration).
+- On-device SQLite with a migration-safe, durable sync outbox.
+- Google sign-in and per-user Firestore synchronization (requires Firebase setup below).
 - PIN lock (in Android encrypted secure storage), optional biometric unlock.
 - Encrypted backup using password-derived AES-256-GCM and `.mymoney` file.
 - Android Share Sheet: choose Gmail to send encrypted backup manually.
-- Restore replaces all entries only after successful decryption/validation.
+- Restore validates the complete encrypted backup and merges records without clearing existing entries.
 - Optional encrypted local copy refreshed when app data is loaded/edited.
 
 ## Not yet implemented
@@ -22,10 +23,167 @@
 - **Automatic email dispatch is NOT implemented.** A Google OAuth + Gmail API
   integration, scheduled work, and real-device testing are required. Android
   background execution does not promise exact delivery time.
-- Custom accounts/categories, recurring bills, export CSV, cloud sync, budgets.
+- Recurring bills, export CSV, budgets.
 - Stronger security hardening and testing across Android devices.
 - Pixel-perfect recreation of any proprietary existing finance application.
 - No pre-built or independently verified APK is included.
+
+## Offline storage, Firebase sync, and PWA setup
+
+Local transactions are written to SQLite before any network request. A schema
+migration adds stable UUIDs and timestamps without deleting or replacing the
+existing `entries` table. A SQLite outbox records each pending upsert in the
+same local database; edits replace the pending operation for that UUID, and
+deletes are durable tombstones rather than physical deletes. Firestore retries
+use the UUID as the document ID. Concurrent edits use last-write-wins by
+`updatedAt`, then the stable device ID for equal timestamps. Tombstones take
+part in the same comparison, so an older copy on another device cannot
+undelete a newer deletion. Always verify the UI says **Synced**; having network
+connectivity alone does not mean sync succeeded.
+
+This repository includes a Flutter web shell and the SQLite WASM/shared-worker
+assets, but Firebase still needs project-specific configuration. Never put a
+private key or service-account credential in this app.
+
+1. Install Flutter, Android Studio/Xcode as needed, Node.js, and the Firebase
+   CLI. Generate platform shells in a separate directory so Flutter does not
+   overwrite the existing app source or manifest:
+
+   ```powershell
+   flutter create --platforms=android,ios --org com.personal.finance --project-name mymoney platform_shell
+   Copy-Item .\platform_shell\android .\android -Recurse
+   Copy-Item .\platform_shell\ios .\ios -Recurse
+   Copy-Item .\platform_shell\.metadata .\.metadata
+   ```
+
+   Do not copy the generated `lib/` or `pubspec.yaml` over this project's
+   files. The existing `web/` folder is already configured for the PWA; do
+   not replace it with the unmodified generated template. On Windows, iOS
+   builds require macOS/Xcode.
+2. Create a Firebase project. Add Android, iOS, and Web apps using the package
+   ID / bundle ID generated for this project. In Firebase Console → **Authentication
+   → Sign-in method**, enable **Google**. Add the deployed web hostname and
+   `localhost` to **Authorized domains**.
+3. Install FlutterFire CLI and configure the platforms. This generates
+   `lib/firebase_options.dart` for your own public Firebase app IDs and writes
+   native client configuration files. The generated Dart options file replaces
+   this source-only template.
+
+   ```powershell
+   dart pub global activate flutterfire_cli
+   flutterfire configure --project YOUR_FIREBASE_PROJECT_ID --platforms android,ios,web
+   ```
+
+   Download and install the generated `google-services.json` in
+   `android/app/` and `GoogleService-Info.plist` in `ios/Runner/` if the CLI
+   does not install them. Finish the Google Sign-In platform steps shown by
+   Firebase/FlutterFire (Android SHA-1/SHA-256 fingerprints, Google OAuth
+   client configuration, iOS URL scheme, and web OAuth authorized origins).
+   Ensure the generated Android app manifest declares
+   `android.permission.INTERNET`, the app Gradle plugin applies
+   `com.google.gms.google-services`, and the iOS plist is included in the
+   Runner target. FlutterFire may print the required Gradle plugin setup for
+   the generated Gradle template; follow that output exactly.
+   Treat OAuth client IDs and Firebase web API keys as public app configuration,
+   but never include service-account JSON, Admin SDK credentials, or private
+   signing keys in the app or repository.
+4. Create the default Firestore database, then deploy the included restrictive
+   rules. They scope reads and writes to `users/{uid}` and transaction records
+   under that user's path. Do not deploy permissive test-mode rules.
+
+   ```powershell
+   firebase use YOUR_FIREBASE_PROJECT_ID
+   firebase deploy --only firestore:rules
+   ```
+
+5. Install packages and test the app. The SQLite setup command copies the
+   package-matched WASM/shared-worker files into `web/`; keep those files in
+   place so browser storage can open the local database:
+
+   ```powershell
+   flutter pub get
+   dart run sqflite_common_ffi_web:setup
+   flutter analyze
+   flutter test
+   flutter build web
+   ```
+
+   Deploy `build/web` with Firebase Hosting (`firebase.json` is included).
+   Host the app over HTTPS (localhost is allowed for development). After the
+   first successful online visit, the PWA service worker caches the app shell,
+   Flutter runtime assets, and SQLite WASM resources for offline launches.
+   Android Chrome/desktop Chrome offer **Install app** from the browser menu.
+   On iPhone/iPad, open the HTTPS site in Safari and choose **Share → Add to
+   Home Screen**. Browser storage is origin-specific and can still be cleared
+   by the browser or device, so keep encrypted backups.
+6. Sign in from **Settings & Backup**. Existing local transactions are queued
+   and reconciled rather than wiped. On a second device, sign in to download
+   cloud records. Use **Sync now**, and wait for **Synced**. Sync also retries
+   on connectivity restoration and app resume. Background execution is not
+   promised on mobile browsers.
+
+The PWA service worker uses a network-first strategy for app navigation and
+caches same-origin app assets for offline loading; Firebase/API hosts are not
+cached by that worker. SQLite persists locally in browser storage through
+IndexedDB and its WASM worker. Firestore web persistence is separate and only
+available after Firebase setup. Browser eviction, private browsing, and iOS
+storage pressure can remove local data; manual encrypted export/restore remains
+important. For subsequent app releases, change `CACHE_VERSION` in
+`web/service-worker.js` so installed clients discard cached assets from the
+previous release.
+
+### Sync behavior and limitations
+
+- Firestore paths are `users/{uid}/transactions/{transactionUuid}`; Firebase
+  Authentication UID scoping and `firestore.rules` prevent cross-user access.
+- A single outbox row per entity coalesces repeated edits safely. A successful
+  server transaction must finish before its outbox row is removed.
+- Conflict policy is deterministic last-write-wins based on client UTC update
+  time and device ID. Device clocks can differ; review and back up important
+  data before first multi-device use.
+- A local database is bound to the first Google UID that signs in. Switching
+  accounts on the same app profile is blocked to avoid uploading one person's
+  offline records into another person's cloud space; use a separate app/browser
+  profile for another user.
+- Transactions plus user-created accounts and income/expense categories
+  synchronize. Renaming a custom catalog item also updates matching local
+  transaction labels and queues those transactions; removing a custom item is
+  a tombstone, so past records are retained.
+- Firestore rules reject physical deletion; app deletions are tombstone writes.
+  Authentication and database setup are required before cloud sync can report
+  a successful state.
+- Firestore encrypts transport and server storage; the local SQLite database
+  itself is not encrypted at rest.
+- No background sync guarantee is made. The app retries at launch/resume,
+  on reconnect, after local edits, and via the manual button.
+
+### Offline and conflict test checklist
+
+Use disposable test accounts/data first:
+
+1. Start offline, create an income and expense, edit one, then delete one.
+   Verify entries remain visible locally as appropriate after closing/reopening
+   the app; deleted entries should stay absent.
+2. Reconnect and wait for **Synced**. Confirm the server records have the same
+   IDs and amounts, with the deletion represented by a tombstone.
+3. Repeat edits and delete on two devices while offline, then reconnect both.
+   Confirm both converge to the most recent `updatedAt` (device ID breaks an
+   exact tie) and the deleted record stays deleted when its tombstone wins.
+4. Sign into a clean device and confirm it downloads the records. Try a
+   different Google account and confirm it cannot read the first user's
+   Firestore paths.
+5. On web, confirm the browser recognizes the manifest and service worker,
+   finish one successful online app load, then reload in offline mode. Verify
+   the app shell and SQLite data load for the same origin. Repeat in iPhone
+   Safari installed to the Home Screen and check storage after browser/device
+   restart.
+6. Export an encrypted backup, restore it into a test profile with existing
+   transactions, and confirm restore merges rather than clearing pre-existing
+   records.
+
+Run this matrix on actual target browsers/devices before relying on financial
+data. The current environment has no Flutter or Dart executable, so the code
+here has not been built or device-tested.
 
 ## Build APK with GitHub Actions (Android phone only needed for installation)
 
@@ -51,7 +209,9 @@ some platform/dependency adjustments might be necessary.
 
 ```powershell
 flutter doctor
-flutter create --platforms=android --org com.personal.finance --project-name mymoney .
+flutter create --platforms=android --org com.personal.finance --project-name mymoney platform_shell
+Copy-Item .\platform_shell\android .\android -Recurse
+Copy-Item .\platform_shell\.metadata .\.metadata
 python scripts/configure_android.py
 flutter pub get
 flutter analyze
@@ -66,7 +226,7 @@ APK location: `build/app/outputs/flutter-apk/app-debug.apk`.
   least 10 characters; it opens the Android share dialog. You must choose Gmail,
   enter your own email address, and tap Send.
 - Settings → **Restore encrypted backup** reads a `.mymoney` file and asks for
-  its original passphrase; it **replaces** the local transaction records.
+  its original passphrase; valid records merge without clearing existing data.
 - If the backup password is forgotten, its contents cannot be decrypted.
 - Automatic local copy is kept in the app private storage only; it is NOT sent
   as an email. **Uninstalling the app may erase both DB and this local copy.**

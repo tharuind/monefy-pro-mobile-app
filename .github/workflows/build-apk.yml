@@ -15,7 +15,10 @@ jobs:
           channel: stable
           cache: true
       - name: Generate Android project
-        run: flutter create --platforms=android --org com.personal.finance --project-name mymoney .
+        run: |
+          flutter create --platforms=android --org com.personal.finance --project-name mymoney platform_shell
+          cp -R platform_shell/android ./android
+          cp platform_shell/.metadata ./.metadata
       - name: Configure Android project
         run: python3 scripts/configure_android.py
       - name: Fetch packages

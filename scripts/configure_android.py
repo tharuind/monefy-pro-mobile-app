@@ -1,5 +1,5 @@
-"""Run AFTER `flutter create --platforms=android --org com.personal.finance .`.
-Configures Android-generated project for biometric and encrypted-storage plugins.
+"""Run AFTER generating the Android platform shell.
+Configures Android for biometrics, encrypted storage, and Firebase networking.
 """
 from pathlib import Path
 
@@ -17,10 +17,13 @@ for activity in activity_files:
 
 manifest = root / 'src/main/AndroidManifest.xml'
 s = manifest.read_text()
-if 'android.permission.USE_BIOMETRIC' not in s:
-    idx = s.find('<application')
-    assert idx != -1
-    s = s[:idx] + '<uses-permission android:name="android.permission.USE_BIOMETRIC"/>\n    ' + s[idx:]
+for permission in ('android.permission.USE_BIOMETRIC',
+                   'android.permission.INTERNET'):
+    declaration = f'<uses-permission android:name="{permission}"/>'
+    if permission not in s:
+        idx = s.find('<application')
+        assert idx != -1
+        s = s[:idx] + declaration + '\n    ' + s[idx:]
 if 'android:allowBackup' not in s:
     s = s.replace('<application', '<application android:allowBackup="false"', 1)
 manifest.write_text(s)

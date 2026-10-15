@@ -1,7 +1,6 @@
 import 'dart:math' as math;
-import 'dart:io';
-
-import 'package:path_provider/path_provider.dart';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +9,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'cloud_sync.dart';
 import 'data.dart';
 
 const emerald = Color(0xFF11A676);
@@ -44,8 +44,9 @@ String money(int cents) {
   return '${negative}LKR $grouped.${(v % 100).toString().padLeft(2, '0')}';
 }
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await CloudSyncService.instance.initialize();
   runApp(const MyMoneyApp());
 }
 
@@ -88,6 +89,9 @@ class _AppGateState extends State<AppGate> with WidgetsBindingObserver {
   }
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      CloudSyncService.instance.onResume();
+    }
     if (state == AppLifecycleState.paused) {
       vault.read(key: 'app-pin').then((value) {
         if (mounted && value != null) setState(() => locked = true);
@@ -156,6 +160,7 @@ class MoneyHome extends StatefulWidget {
 
 class _MoneyHomeState extends State<MoneyHome> {
   List<MoneyEntry> all = [];
+  List<String> customAccounts = [];
   DateTime selected = DateTime(DateTime.now().year, DateTime.now().month);
   bool loading = true;
   String accountFilter = 'All';
@@ -163,8 +168,18 @@ class _MoneyHomeState extends State<MoneyHome> {
   @override
   void initState() { super.initState(); reload(); }
   Future<void> reload() async {
-    final data = await MoneyDatabase.instance.list();
-    if (mounted) setState(() { all = data; loading = false; });
+    final database = MoneyDatabase.instance;
+    final data = await database.list();
+    final savedAccounts = await database.catalogNames('account');
+    if (mounted) setState(() {
+      all = data;
+      customAccounts = savedAccounts;
+      if (accountFilter != 'All' &&
+          ![...accounts, ...customAccounts].contains(accountFilter)) {
+        accountFilter = 'All';
+      }
+      loading = false;
+    });
     // Keeps an encrypted PRIVATE copy while the app is opened/updated.
     // Does not promise background delivery or send email.
     try {
@@ -184,9 +199,17 @@ class _MoneyHomeState extends State<MoneyHome> {
   });
 
   Future<void> openEditor({MoneyEntry? entry, String type = 'expense'}) async {
+    final database = MoneyDatabase.instance;
+    final catalog = await Future.wait([
+      database.catalogNames('account'),
+      database.catalogNames('expense_category'),
+      database.catalogNames('income_category'),
+    ]);
     final changed = await showModalBottomSheet<bool>(
       context: context, isScrollControlled: true, showDragHandle: true,
-      builder: (ctx) => EntryEditor(entry: entry, initialType: type));
+      builder: (ctx) => EntryEditor(entry: entry, initialType: type,
+        extraAccounts: catalog[0], extraExpenses: catalog[1],
+        extraIncomes: catalog[2]));
     if (changed == true) await reload();
   }
 
@@ -211,8 +234,23 @@ class _MoneyHomeState extends State<MoneyHome> {
     }
     return Scaffold(
       appBar: AppBar(title: const Text('MyMoney', style: TextStyle(fontWeight: FontWeight.w800)),
-        actions: [IconButton(tooltip: 'Settings and backups',
-          onPressed: settings, icon: const Icon(Icons.settings_outlined))]),
+        actions: [
+          AnimatedBuilder(animation: CloudSyncService.instance, builder: (context, _) {
+            final sync = CloudSyncService.instance;
+            return TextButton.icon(
+              onPressed: sync.status == SyncStatus.syncing ? null : sync.syncNow,
+              icon: Icon(switch (sync.status) {
+                SyncStatus.offline => Icons.cloud_off_outlined,
+                SyncStatus.pending => Icons.cloud_upload_outlined,
+                SyncStatus.syncing => Icons.sync,
+                SyncStatus.synced => Icons.cloud_done_outlined,
+              }),
+              label: Text(sync.status.label, maxLines: 1),
+            );
+          }),
+          IconButton(tooltip: 'Settings and backups',
+            onPressed: settings, icon: const Icon(Icons.settings_outlined)),
+        ]),
       body: loading ? const Center(child: CircularProgressIndicator()) :
         RefreshIndicator(onRefresh: reload, child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 100), children: [
@@ -235,7 +273,7 @@ class _MoneyHomeState extends State<MoneyHome> {
                 style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
               IconButton(onPressed: () => changeMonth(1), icon: const Icon(Icons.chevron_right)),
               DropdownButton<String>(value: accountFilter, underline: const SizedBox(),
-                items: ['All', ...accounts].map((a) => DropdownMenuItem(value: a,
+                items: ['All', ...accounts, ...customAccounts].toSet().map((a) => DropdownMenuItem(value: a,
                   child: Text(a))).toList(),
                 onChanged: (v) => setState(() => accountFilter = v ?? 'All')),
             ]),
@@ -349,7 +387,12 @@ class DonutPainter extends CustomPainter {
 class EntryEditor extends StatefulWidget {
   final MoneyEntry? entry;
   final String initialType;
-  const EntryEditor({super.key, this.entry, required this.initialType});
+  final List<String> extraAccounts;
+  final List<String> extraExpenses;
+  final List<String> extraIncomes;
+  const EntryEditor({super.key, this.entry, required this.initialType,
+    this.extraAccounts = const [], this.extraExpenses = const [],
+    this.extraIncomes = const []});
   @override
   State<EntryEditor> createState() => _EntryEditorState();
 }
@@ -360,6 +403,23 @@ class _EntryEditorState extends State<EntryEditor> {
   late String type, category, account;
   late DateTime date;
   bool saving = false;
+  List<String> get accountOptions {
+    final result = [...accounts, ...widget.extraAccounts];
+    if (widget.entry != null && !result.contains(widget.entry!.account)) {
+      result.add(widget.entry!.account);
+    }
+    return result.toSet().toList();
+  }
+  List<String> get categoryOptions {
+    final result = type == 'income'
+        ? [...incomes, ...widget.extraIncomes]
+        : [...expenses, ...widget.extraExpenses];
+    if (widget.entry != null && widget.entry!.type == type &&
+        !result.contains(widget.entry!.category)) {
+      result.add(widget.entry!.category);
+    }
+    return result.toSet().toList();
+  }
   @override
   void initState() {
     super.initState();
@@ -381,8 +441,10 @@ class _EntryEditorState extends State<EntryEditor> {
     try {
       final cents = (number * 100).round();
       await MoneyDatabase.instance.save(MoneyEntry(
-        id: widget.entry?.id, cents: cents, type: type, category: category,
+        id: widget.entry?.id, cloudId: widget.entry?.cloudId,
+        cents: cents, type: type, category: category,
         account: account, note: note.text.trim(), date: date));
+      await CloudSyncService.instance.localChanged();
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(
@@ -398,12 +460,13 @@ class _EntryEditorState extends State<EntryEditor> {
         ]));
     if (confirmed == true && widget.entry?.id != null) {
       await MoneyDatabase.instance.delete(widget.entry!.id!);
+      await CloudSyncService.instance.localChanged();
       if (mounted) Navigator.pop(context, true);
     }
   }
   @override
   Widget build(BuildContext context) {
-    final options = type == 'income' ? incomes : expenses;
+    final options = categoryOptions;
     return Padding(padding: EdgeInsets.fromLTRB(20, 12, 20,
       MediaQuery.of(context).viewInsets.bottom + 24),
       child: SingleChildScrollView(child: Form(key: formKey, child: Column(
@@ -436,10 +499,10 @@ class _EntryEditorState extends State<EntryEditor> {
             items: options.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
             onChanged: (v) => setState(() => category = v ?? options.first)),
           const SizedBox(height: 12),
-          DropdownButtonFormField<String>(value: accounts.contains(account) ? account : accounts.first,
+          DropdownButtonFormField<String>(value: accountOptions.contains(account) ? account : accountOptions.first,
             decoration: const InputDecoration(labelText: 'Account'),
-            items: accounts.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-            onChanged: (v) => setState(() => account = v ?? accounts.first)),
+            items: accountOptions.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+            onChanged: (v) => setState(() => account = v ?? accountOptions.first)),
           const SizedBox(height: 12),
           TextFormField(controller: note, maxLength: 120,
             decoration: const InputDecoration(labelText: 'Note (optional)')),
@@ -517,9 +580,12 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() => busy = true);
     try {
       final json = await MoneyDatabase.instance.backupJson();
-      final file = await BackupTools.encryptedFile(json, password);
+      final encrypted = await BackupTools.encryptedText(json, password);
+      final filename = 'MyMoney-${DateTime.now().toUtc().toIso8601String().replaceAll(':', '-')}.mymoney';
       await SharePlus.instance.share(ShareParams(
-        files: [XFile(file.path)], subject: 'MyMoney encrypted backup',
+        files: [XFile.fromData(Uint8List.fromList(utf8.encode(encrypted)),
+          name: filename, mimeType: 'application/octet-stream')],
+        subject: 'MyMoney encrypted backup',
         text: 'Encrypted MyMoney backup. Keep the backup password separate and private.'));
       msg('Choose Gmail and send the attached backup to your own address.');
     } catch (e) {
@@ -531,27 +597,25 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> restore() async {
     final pass = await askPassword('Restore encrypted backup');
     if (pass == null) return;
-    final file = await FilePicker.pickFile(type: FileType.custom,
+    final files = await FilePicker.pickFiles(type: FileType.custom,
       allowedExtensions: ['mymoney']);
-    if (file == null || !mounted) return;
+    if (files.isEmpty || !mounted) return;
     final yes = await showDialog<bool>(context: context, builder: (ctx) =>
-      AlertDialog(title: const Text('Replace all transactions?'),
-        content: const Text('Restoring replaces all current records. '
-          'Before restoring, email yourself a backup of the current records.'),
+      AlertDialog(title: const Text('Merge backup records?'),
+        content: const Text('Backup records are added without clearing existing '
+          'transactions, accounts, or categories. Keep a separate backup too.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Cancel')),
           FilledButton(onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Replace & restore')),
+            child: const Text('Merge & restore')),
         ]));
     if (yes != true) return;
     setState(() => busy = true);
     try {
-      final bytes = await file.readAsBytes();
-      final tmp = await getTemporaryDirectory();
-      final path = File('${tmp.path}/restore-import.mymoney');
-      await path.writeAsBytes(bytes, flush: true);
-      await BackupTools.restore(path, pass);
+      final bytes = await files.single.readAsBytes();
+      await BackupTools.restoreText(utf8.decode(bytes), pass);
+      await CloudSyncService.instance.localChanged();
       await widget.onRestore();
       msg('Backup successfully restored.');
     } catch (e) {
@@ -607,10 +671,159 @@ class _SettingsPageState extends State<SettingsPage> {
     }
     if (mounted) setState(() => autoLocal = enable);
   }
+  Future<void> signIn() async {
+    setState(() => busy = true);
+    try {
+      await CloudSyncService.instance.signInWithGoogle();
+      await widget.onRestore();
+      final sync = CloudSyncService.instance;
+      msg(sync.status == SyncStatus.synced
+          ? 'Google account connected. All changes are synced.'
+          : 'Google account connected · ${sync.status.label}'
+            '${sync.errorMessage == null ? '' : ': ${sync.errorMessage}'}');
+    } catch (e) {
+      msg('Google sign-in or sync failed: $e');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+  Future<void> manageCatalog(String kind, String title) async {
+    final name = TextEditingController();
+    var items = await MoneyDatabase.instance.catalogItems(kind);
+    if (!mounted) return;
+    await showDialog<void>(context: context, builder: (dialogContext) =>
+      StatefulBuilder(builder: (context, setDialogState) => AlertDialog(
+        title: Text(title),
+        content: SizedBox(width: 420, child: Column(
+          mainAxisSize: MainAxisSize.min, children: [
+            Row(children: [
+              Expanded(child: TextField(controller: name, maxLength: 32,
+                decoration: const InputDecoration(hintText: 'Name'))),
+              IconButton(tooltip: 'Add', icon: const Icon(Icons.add_circle),
+                onPressed: () async {
+                  try {
+                    await MoneyDatabase.instance.saveCatalogItem(kind, name.text);
+                    name.clear();
+                    items = await MoneyDatabase.instance.catalogItems(kind);
+                    setDialogState(() {});
+                    await CloudSyncService.instance.localChanged();
+                  } catch (e) { msg('Could not add item: $e'); }
+                }),
+            ]),
+            const SizedBox(height: 8),
+            SizedBox(height: 250, child: items.isEmpty
+              ? const Center(child: Text('No custom items yet.'))
+              : ListView.separated(itemCount: items.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final item = items[index];
+                  final id = item['id'] as String;
+                  final itemName = item['name'] as String;
+                  return ListTile(dense: true, title: Text(itemName),
+                    trailing: Wrap(children: [
+                      IconButton(tooltip: 'Rename', icon: const Icon(Icons.edit_outlined),
+                        onPressed: () async {
+                          final controller = TextEditingController(text: itemName);
+                          final renamed = await showDialog<String>(context: context,
+                            builder: (ctx) => AlertDialog(title: const Text('Rename'),
+                              content: TextField(controller: controller, autofocus: true),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(ctx),
+                                  child: const Text('Cancel')),
+                                FilledButton(onPressed: () => Navigator.pop(ctx, controller.text),
+                                  child: const Text('Save')),
+                              ]));
+                          if (renamed == null) return;
+                          try {
+                            await MoneyDatabase.instance.saveCatalogItem(kind, renamed, id: id);
+                            items = await MoneyDatabase.instance.catalogItems(kind);
+                            setDialogState(() {});
+                            await CloudSyncService.instance.localChanged();
+                          } catch (e) { msg('Could not rename item: $e'); }
+                        }),
+                      IconButton(tooltip: 'Delete', icon: const Icon(Icons.delete_outline, color: red),
+                        onPressed: () async {
+                          try {
+                            await MoneyDatabase.instance.deleteCatalogItem(kind, id);
+                            items = await MoneyDatabase.instance.catalogItems(kind);
+                            setDialogState(() {});
+                            await CloudSyncService.instance.localChanged();
+                          } catch (e) { msg('Could not delete item: $e'); }
+                        }),
+                    ]));
+                })),
+          ])),
+        actions: [TextButton(onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('Done'))],
+      )));
+    name.dispose();
+  }
+  Future<void> signOut() async {
+    setState(() => busy = true);
+    try {
+      await CloudSyncService.instance.signOut();
+      msg('Signed out. Your local records remain on this device.');
+    } catch (e) {
+      msg('Unable to sign out: $e');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+  Future<void> syncNow() async {
+    setState(() => busy = true);
+    try {
+      await CloudSyncService.instance.syncNow();
+      await widget.onRestore();
+      final sync = CloudSyncService.instance;
+      msg(sync.status == SyncStatus.synced
+          ? 'All changes are synced.' : sync.errorMessage ?? sync.status.label);
+    } catch (e) {
+      msg('Sync failed: $e');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Settings & Backup')),
     body: ListView(padding: const EdgeInsets.all(16), children: [
+      const Text('CLOUD SYNC', style: TextStyle(fontSize: 15, color: emerald,
+        fontWeight: FontWeight.bold)),
+      const SizedBox(height: 8),
+      Card(child: AnimatedBuilder(animation: CloudSyncService.instance,
+        builder: (context, _) {
+          final sync = CloudSyncService.instance;
+          final signedInUser = sync.user;
+          return Column(children: [
+            ListTile(leading: Icon(signedInUser == null
+                ? Icons.account_circle_outlined : Icons.verified_user_outlined),
+              title: Text(signedInUser?.email ?? 'Google account'),
+              subtitle: Text(sync.errorMessage ?? sync.status.label),
+              trailing: const Icon(Icons.chevron_right),
+              enabled: !busy,
+              onTap: signedInUser == null ? signIn : signOut),
+            const Divider(height: 1),
+            ListTile(enabled: !busy, leading: const Icon(Icons.sync),
+              title: const Text('Sync now'),
+              subtitle: const Text('Wait for the status to show Synced.'),
+              trailing: const Icon(Icons.chevron_right), onTap: syncNow),
+          ]);
+        })),
+      const SizedBox(height: 22),
+      const Text('ACCOUNTS & CATEGORIES', style: TextStyle(fontSize: 15, color: emerald,
+        fontWeight: FontWeight.bold)),
+      const SizedBox(height: 8),
+      Card(child: Column(children: [
+        for (final item in const [
+          ('account', 'Manage custom accounts'),
+          ('expense_category', 'Manage expense categories'),
+          ('income_category', 'Manage income categories'),
+        ])
+          ListTile(leading: const Icon(Icons.tune),
+            title: Text(item.$2), trailing: const Icon(Icons.chevron_right),
+            onTap: busy ? null : () => manageCatalog(item.$1, item.$2)),
+      ])),
+      const SizedBox(height: 22),
       const Text('BACKUP', style: TextStyle(fontSize: 15, color: emerald,
         fontWeight: FontWeight.bold)),
       const SizedBox(height: 8),

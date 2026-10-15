@@ -6,3 +6,4 @@ android/.gradle/
 android/local.properties
 *.iml
 .idea/
+platform_shell/
