@@ -1,4 +1,4 @@
-# MyMoney — Personal Expense Tracker (Flutter source)
+# My Money — Personal Expense Tracker (Flutter source)
 
 > **IMPORTANT: This ZIP is SOURCE CODE, not an APK.** It has not been compiled
 > or installed in the current environment. Flutter/Android SDK and outbound
@@ -11,7 +11,8 @@
 - Android Flutter material-3 interface with income/expense add, edit, delete.
 - Category donut chart, month filter, account filter, running balance.
 - On-device SQLite with a migration-safe, durable sync outbox.
-- Google sign-in and per-user Firestore synchronization (requires Firebase setup below).
+- Google sign-in and per-user Firestore synchronization. Sign into the same
+  Google account on another device to download its transactions and categories.
 - PIN lock (in Android encrypted secure storage), optional biometric unlock.
 - Encrypted backup using password-derived AES-256-GCM and `.mymoney` file.
 - Android Share Sheet: choose Gmail to send encrypted backup manually.
@@ -64,29 +65,27 @@ private key or service-account credential in this app.
    ID / bundle ID generated for this project. In Firebase Console → **Authentication
    → Sign-in method**, enable **Google**. Add the deployed web hostname and
    `localhost` to **Authorized domains**.
-3. Install FlutterFire CLI and configure the platforms. This generates
-   `lib/firebase_options.dart` for your own public Firebase app IDs and writes
-   native client configuration files. The generated Dart options file replaces
-   this source-only template.
+3. Install FlutterFire CLI and configure the platforms. Register the Android
+   package ID generated for this app in Firebase, enable Google in Firebase
+   Authentication, and add the Android SHA-1 fingerprint to the Google OAuth
+   client. Keep the Web OAuth client ID; Android Google sign-in uses it as the
+   server client ID.
 
    ```powershell
    dart pub global activate flutterfire_cli
    flutterfire configure --project YOUR_FIREBASE_PROJECT_ID --platforms android,ios,web
    ```
 
-   Download and install the generated `google-services.json` in
-   `android/app/` and `GoogleService-Info.plist` in `ios/Runner/` if the CLI
-   does not install them. Finish the Google Sign-In platform steps shown by
-   Firebase/FlutterFire (Android SHA-1/SHA-256 fingerprints, Google OAuth
-   client configuration, iOS URL scheme, and web OAuth authorized origins).
-   Ensure the generated Android app manifest declares
-   `android.permission.INTERNET`, the app Gradle plugin applies
-   `com.google.gms.google-services`, and the iOS plist is included in the
-   Runner target. FlutterFire may print the required Gradle plugin setup for
-   the generated Gradle template; follow that output exactly.
-   Treat OAuth client IDs and Firebase web API keys as public app configuration,
-   but never include service-account JSON, Admin SDK credentials, or private
-   signing keys in the app or repository.
+   The checked-in `lib/firebase_options.dart` reads Firebase's public app
+   identifiers from `--dart-define`; do not replace it with a generated file.
+   For the GitHub Actions APK workflow, add these repository **Actions
+   variables** under Settings → Secrets and variables → Actions → Variables:
+   `FIREBASE_API_KEY`, `FIREBASE_ANDROID_APP_ID`, `FIREBASE_PROJECT_ID`,
+   `FIREBASE_MESSAGING_SENDER_ID`, and `FIREBASE_WEB_CLIENT_ID`. The workflow
+   stops with an error if any are missing. For a web build, also provide
+   `FIREBASE_WEB_APP_ID` and `FIREBASE_AUTH_DOMAIN` as build defines. These are
+   public client configuration values; never add service-account JSON, Admin
+   SDK credentials, or private signing keys to the app or repository.
 4. Create the default Firestore database, then deploy the included restrictive
    rules. They scope reads and writes to `users/{uid}` and transaction records
    under that user's path. Do not deploy permissive test-mode rules.
@@ -105,7 +104,13 @@ private key or service-account credential in this app.
    dart run sqflite_common_ffi_web:setup
    flutter analyze
    flutter test
-   flutter build web
+   flutter build web `
+     --dart-define=FIREBASE_CONFIGURED=true `
+     --dart-define=FIREBASE_API_KEY=YOUR_FIREBASE_API_KEY `
+     --dart-define=FIREBASE_WEB_APP_ID=YOUR_FIREBASE_WEB_APP_ID `
+     --dart-define=FIREBASE_PROJECT_ID=YOUR_FIREBASE_PROJECT_ID `
+     --dart-define=FIREBASE_MESSAGING_SENDER_ID=YOUR_FIREBASE_MESSAGING_SENDER_ID `
+     --dart-define=FIREBASE_AUTH_DOMAIN=YOUR_FIREBASE_AUTH_DOMAIN
    ```
 
    Deploy `build/web` with Firebase Hosting (`firebase.json` is included).
@@ -116,11 +121,14 @@ private key or service-account credential in this app.
    On iPhone/iPad, open the HTTPS site in Safari and choose **Share → Add to
    Home Screen**. Browser storage is origin-specific and can still be cleared
    by the browser or device, so keep encrypted backups.
-6. Sign in from **Settings & Backup**. Existing local transactions are queued
-   and reconciled rather than wiped. On a second device, sign in to download
-   cloud records. Use **Sync now**, and wait for **Synced**. Sync also retries
-   on connectivity restoration and app resume. Background execution is not
-   promised on mobile browsers.
+6. Open **Settings & Backup** and sign in with Google. Use that same Google
+   account on every device: existing local transactions are reconciled rather
+   than wiped, and a clean device downloads that account's cloud records.
+   Use **Sync now** and wait for **Synced**. Sync retries on connectivity
+   restoration and app resume. This is automatic cloud sync, not an email
+   attachment; the separate encrypted email backup remains available in
+   **Email encrypted backup**. Background execution is not promised on mobile
+   browsers.
 
 The PWA service worker uses a network-first strategy for app navigation and
 caches same-origin app assets for offline loading; Firebase/API hosts are not
@@ -192,13 +200,14 @@ here has not been built or device-tested.
 3. Upload **all files including `.github/workflows/build-apk.yml`** to that repository.
    If uploading through browser, hidden `.github` might need to be selected
    explicitly. No passwords should be committed to the repository.
-4. Open your repository on GitHub → **Actions** → **Build MyMoney Android APK**
-   → **Run workflow**.
+4. Configure the Firebase Actions variables described above. Then open your
+   repository on GitHub → **Actions** → **Build MyMoney Android APK** →
+   **Run workflow**.
 5. After a **successful** workflow run, open the run → **Artifacts** →
    `MyMoney-Android-APK` and download it.
 6. Unzip the artifact. Copy `app-debug.apk` to your Android phone and install it.
    Android may request permission to install apps from the Files application.
-7. Open MyMoney, add some entries, and email a backup from Settings.
+7. Open My Money, add some entries, and email a backup from Settings.
 8. Verify backup recovery **with test data** before storing important records.
 
 If the workflow fails, read the error under Actions. This ZIP has not been run

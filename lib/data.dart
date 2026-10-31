@@ -377,7 +377,7 @@ class MoneyDatabase {
     if (parsed is! Map ||
         !['mymoney-v1', 'mymoney-v2'].contains(parsed['format']) ||
         parsed['entries'] is! List) {
-      throw const FormatException('Not a MyMoney backup');
+      throw const FormatException('Not a My Money backup');
     }
     final safeItems = <MoneyEntry>[];
     final safeCatalog = <Map<String, dynamic>>[];

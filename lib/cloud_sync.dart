@@ -28,6 +28,7 @@ class CloudSyncService extends ChangeNotifier {
 
   SyncStatus status = SyncStatus.pending;
   String? errorMessage;
+  int completedSyncs = 0;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   StreamSubscription<User?>? _authSubscription;
   bool _configured = false;
@@ -95,7 +96,13 @@ class CloudSyncService extends ChangeNotifier {
     if (kIsWeb) {
       await FirebaseAuth.instance.signInWithPopup(GoogleAuthProvider());
     } else {
-      final googleUser = await GoogleSignIn(scopes: const ['email']).signIn();
+      final clientId = DefaultFirebaseOptions.googleServerClientId;
+      if (clientId.isEmpty) {
+        throw StateError('Google sign-in is not configured. Set FIREBASE_WEB_CLIENT_ID '
+            'to the Firebase project Web OAuth client ID.');
+      }
+      final googleUser = await GoogleSignIn(
+        serverClientId: clientId, scopes: const ['email']).signIn();
       if (googleUser == null) throw StateError('Google sign-in was cancelled.');
       final auth = await googleUser.authentication;
       final credential = GoogleAuthProvider.credential(
@@ -242,6 +249,7 @@ class CloudSyncService extends ChangeNotifier {
           await database.mergeRemoteCatalog({'id': document.id, ...document.data()});
         }
       }
+      completedSyncs++;
       status = await database.pendingCount() == 0
           ? SyncStatus.synced : SyncStatus.pending;
     } catch (error) {

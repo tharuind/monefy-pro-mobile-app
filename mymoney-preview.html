@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#f7f5f2">
-  <title>MyMoney — Money, made mindful</title>
+  <title>My Money — Money, made mindful</title>
   <style>
     :root {
       color-scheme: light;
@@ -131,7 +131,7 @@
   </style>
 </head>
 <body>
-  <main class="phone" aria-label="MyMoney finance app preview">
+  <main class="phone" aria-label="My Money finance app preview">
     <div class="app">
       <div class="status"><span id="clock">9:41</span><span class="status-right"><span>◉</span><span class="signal">▂▄▆</span><span>⌁</span><span class="battery"></span></span></div>
       <section class="screen" id="screen" aria-live="polite"></section>
@@ -207,13 +207,13 @@
       function accountsView(){return `<div class="page-heading"><div><h1>Your accounts</h1><p>Choose where your money lives</p></div></div>
         ${accounts.map(a=>`<div class="page-card account-card ${a.name===selectedAccount?"selected":""}" data-account="${escapeHtml(a.name)}"><div class="account-emblem">${a.icon}</div><div class="account-detail"><strong>${escapeHtml(a.name)}</strong><small>${escapeHtml(a.kind)}</small></div><div class="account-total">${money(accountBalance(a.name))}</div>${a.name===selectedAccount?`<span class="check">✓</span>`:""}</div>`).join("")}
         <button class="add-account" data-action="add-account">＋ &nbsp; Add an account</button>`;}
-      function settingsView(){const dark=document.body.classList.contains("dark");return `<div class="page-heading"><div><h1>Settings</h1><p>Make MyMoney feel like yours</p></div></div>
+      function settingsView(){const dark=document.body.classList.contains("dark");return `<div class="page-heading"><div><h1>Settings</h1><p>Make My Money feel like yours</p></div></div>
         <div class="settings-group-title">Appearance</div><div class="page-card"><div class="setting-row"><span class="setting-icon">🌙</span><span class="setting-name">Dark theme</span><button class="switch ${dark?"on":""}" data-action="theme" aria-label="Toggle dark theme" aria-pressed="${dark}"></button></div>
         <div class="setting-row"><span class="setting-icon">🎨</span><span class="setting-name">App accent</span><span class="setting-value">Sage green　●</span></div></div>
         <div class="settings-group-title">Preferences</div><div class="page-card"><div class="setting-row"><span class="setting-icon">💱</span><span class="setting-name">Currency</span><button class="plain-btn" style="width:auto;height:auto;padding:8px;font-size:11px;box-shadow:none" data-action="currency">${window.currency||"USD"}　›</button></div>
         <div class="setting-row"><span class="setting-icon">🔔</span><span class="setting-name">Daily reminder</span><button class="switch" data-action="reminder" aria-label="Toggle daily reminder"></button></div></div>
         <div class="settings-group-title">Your data</div><div class="page-card"><div class="setting-row"><span class="setting-icon">📤</span><button class="setting-name" style="border:0;background:none;text-align:left;cursor:pointer;padding:0" data-action="export">Export transactions</button><span class="setting-value">CSV　›</span></div>
-        <div class="setting-row"><span class="setting-icon">ℹ️</span><span class="setting-name">About MyMoney</span><span class="setting-value">Preview　›</span></div></div><div class="version">Made for a little more peace of mind · v1.0</div>`;}
+        <div class="setting-row"><span class="setting-icon">ℹ️</span><span class="setting-name">About My Money</span><span class="setting-value">Preview　›</span></div></div><div class="version">Made for a little more peace of mind · v1.0</div>`;}
       function escapeHtml(s){return String(s).replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));}
       function openSheet(type="expense",category=null){transactionType=type;selectedCategory=category||(type==="income"?"Salary":"Food");amountInput="";document.getElementById("noteInput").value="";
         document.querySelectorAll(".type-switch button").forEach(b=>b.classList.toggle("active",b.dataset.type===type));

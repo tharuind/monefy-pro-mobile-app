@@ -14,6 +14,8 @@ import 'data.dart';
 
 const emerald = Color(0xFF11A676);
 const red = Color(0xFFE15C6B);
+const mintBackground = Color(0xFFF0FFF5);
+const headerGreen = Color(0xFF55A978);
 const colors = <Color>[
   Color(0xFFFBAD4D), Color(0xFF756DDF), Color(0xFF46AADA),
   Color(0xFFE87093), Color(0xFF61BD8E), Color(0xFFB181D7),
@@ -55,12 +57,16 @@ class MyMoneyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) => MaterialApp(
     debugShowCheckedModeBanner: false,
-    title: 'MyMoney',
+    title: 'My Money',
     theme: ThemeData(
       useMaterial3: true,
       colorScheme: ColorScheme.fromSeed(seedColor: emerald),
-      scaffoldBackgroundColor: const Color(0xFFF7F9FB),
-      appBarTheme: const AppBarTheme(backgroundColor: Color(0xFFF7F9FB)),
+      scaffoldBackgroundColor: mintBackground,
+      appBarTheme: const AppBarTheme(
+        backgroundColor: headerGreen,
+        foregroundColor: Colors.white,
+        iconTheme: IconThemeData(color: Colors.white),
+      ),
       cardTheme: CardThemeData(color: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20))),
       inputDecorationTheme: InputDecorationTheme(
@@ -115,7 +121,7 @@ class _AppGateState extends State<AppGate> with WidgetsBindingObserver {
   Future<void> _biometric() async {
     try {
       final ok = await LocalAuthentication().authenticate(
-        localizedReason: 'Unlock your MyMoney records', biometricOnly: true);
+        localizedReason: 'Unlock your My Money records', biometricOnly: true);
       if (ok && mounted) setState(() => locked = false);
     } catch (_) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(
@@ -138,7 +144,7 @@ class _AppGateState extends State<AppGate> with WidgetsBindingObserver {
         mainAxisSize: MainAxisSize.min, children: [
           const Icon(Icons.lock, size: 60, color: emerald),
           const SizedBox(height: 20),
-          const Text('Unlock MyMoney', style: TextStyle(fontSize: 27, fontWeight: FontWeight.bold)),
+          const Text('Unlock My Money', style: TextStyle(fontSize: 27, fontWeight: FontWeight.bold)),
           const SizedBox(height: 20),
           TextField(controller: pin, obscureText: true, keyboardType: TextInputType.number,
             maxLength: 8, decoration: const InputDecoration(labelText: 'App PIN'),
@@ -166,7 +172,27 @@ class _MoneyHomeState extends State<MoneyHome> {
   String accountFilter = 'All';
 
   @override
-  void initState() { super.initState(); reload(); }
+  void initState() {
+    super.initState();
+    _lastCompletedSync = CloudSyncService.instance.completedSyncs;
+    CloudSyncService.instance.addListener(_onSyncChanged);
+    reload();
+  }
+  int _lastCompletedSync = 0;
+
+  void _onSyncChanged() {
+    final completed = CloudSyncService.instance.completedSyncs;
+    if (completed == _lastCompletedSync) return;
+    _lastCompletedSync = completed;
+    reload();
+  }
+
+  @override
+  void dispose() {
+    CloudSyncService.instance.removeListener(_onSyncChanged);
+    super.dispose();
+  }
+
   Future<void> reload() async {
     final database = MoneyDatabase.instance;
     final data = await database.list();
@@ -233,11 +259,22 @@ class _MoneyHomeState extends State<MoneyHome> {
       groups[e.category] = (groups[e.category] ?? 0) + e.cents;
     }
     return Scaffold(
-      appBar: AppBar(title: const Text('MyMoney', style: TextStyle(fontWeight: FontWeight.w800)),
+      appBar: AppBar(
+        toolbarHeight: 68,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('My Money', style: TextStyle(
+              fontWeight: FontWeight.w800, fontSize: 21, height: 1.1)),
+            Text(accountFilter == 'All' ? 'All accounts' : accountFilter,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400)),
+          ],
+        ),
         actions: [
           AnimatedBuilder(animation: CloudSyncService.instance, builder: (context, _) {
             final sync = CloudSyncService.instance;
-            return TextButton.icon(
+            return IconButton(
+              tooltip: sync.status.label,
               onPressed: sync.status == SyncStatus.syncing ? null : sync.syncNow,
               icon: Icon(switch (sync.status) {
                 SyncStatus.offline => Icons.cloud_off_outlined,
@@ -245,7 +282,6 @@ class _MoneyHomeState extends State<MoneyHome> {
                 SyncStatus.syncing => Icons.sync,
                 SyncStatus.synced => Icons.cloud_done_outlined,
               }),
-              label: Text(sync.status.label, maxLines: 1),
             );
           }),
           IconButton(tooltip: 'Settings and backups',
@@ -253,54 +289,150 @@ class _MoneyHomeState extends State<MoneyHome> {
         ]),
       body: loading ? const Center(child: CircularProgressIndicator()) :
         RefreshIndicator(onRefresh: reload, child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 100), children: [
-            Card(child: Padding(padding: const EdgeInsets.all(20), child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('TOTAL BALANCE', style: TextStyle(color: Colors.black54, letterSpacing: 1)),
-                const SizedBox(height: 7),
-                Text(money(balance), style: const TextStyle(fontSize: 30, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 15),
-                Row(children: [
-                  Expanded(child: _MiniTotal('Income', earned, emerald, Icons.arrow_downward)),
-                  Expanded(child: _MiniTotal('Expenses', spent, red, Icons.arrow_upward)),
-                ])
-              ],
-            ))),
-            const SizedBox(height: 12),
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              IconButton(onPressed: () => changeMonth(-1), icon: const Icon(Icons.chevron_left)),
-              Text('${_month(selected.month)} ${selected.year}',
-                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
-              IconButton(onPressed: () => changeMonth(1), icon: const Icon(Icons.chevron_right)),
-              DropdownButton<String>(value: accountFilter, underline: const SizedBox(),
-                items: ['All', ...accounts, ...customAccounts].toSet().map((a) => DropdownMenuItem(value: a,
-                  child: Text(a))).toList(),
-                onChanged: (v) => setState(() => accountFilter = v ?? 'All')),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 28), children: [
+            Row(children: [
+              IconButton(
+                tooltip: 'Previous month',
+                onPressed: () => changeMonth(-1),
+                icon: const Icon(Icons.chevron_left),
+              ),
+              Expanded(child: Center(child: Text(
+                '${_month(selected.month)} ${selected.year}',
+                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 17),
+              ))),
+              PopupMenuButton<String>(
+                tooltip: 'Filter by account',
+                initialValue: accountFilter,
+                onSelected: (value) => setState(() => accountFilter = value),
+                itemBuilder: (context) => ['All', ...accounts, ...customAccounts]
+                    .toSet().map((account) => PopupMenuItem(
+                      value: account,
+                      child: Text(account == 'All' ? 'All accounts' : account),
+                    )).toList(),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withAlpha(190),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 130),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      const Icon(Icons.filter_list, size: 18),
+                      const SizedBox(width: 4),
+                      Flexible(child: Text(
+                        accountFilter == 'All' ? 'All' : accountFilter,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w600),
+                      )),
+                    ]),
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Next month',
+                onPressed: () => changeMonth(1),
+                icon: const Icon(Icons.chevron_right),
+              ),
             ]),
-            Card(child: Padding(padding: const EdgeInsets.all(18), child: Column(children: [
-              const Text('Spending by category', style: TextStyle(fontWeight: FontWeight.w700)),
-              const SizedBox(height: 16),
-              SizedBox(height: 200, child: Center(child: CustomPaint(
-                painter: DonutPainter(groups), size: const Size(186, 186),
-                child: SizedBox(width: 186, height: 186, child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Text(money(spent), textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold)),
-                    const Text('This month', style: TextStyle(color: Colors.black54)),
+            const SizedBox(height: 4),
+            SizedBox(
+              height: 236,
+              child: Center(child: CustomPaint(
+                painter: DonutPainter(groups),
+                size: const Size(216, 216),
+                child: SizedBox(width: 216, height: 216, child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Text('MONTHLY FLOW', style: TextStyle(
+                      fontSize: 9, letterSpacing: 1, color: Colors.black54,
+                      fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 7),
+                    FittedBox(fit: BoxFit.scaleDown, child: Text(
+                      '+${money(earned)}', style: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w700, color: emerald))),
+                    const SizedBox(height: 2),
+                    FittedBox(fit: BoxFit.scaleDown, child: Text(
+                      '-${money(spent)}', style: const TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.w600, color: red))),
                   ],
                 )),
-              ))),
-              if (groups.isEmpty) const Text('Add your first expense to see the chart.'),
-              Wrap(spacing: 12, runSpacing: 8,
-                children: groups.keys.map((c) => Row(mainAxisSize: MainAxisSize.min, children: [
-                  CircleAvatar(radius: 5, backgroundColor: categoryColor(c)),
-                  const SizedBox(width: 5), Text(c, style: const TextStyle(fontSize: 12)),
-                ])).toList()),
-            ]))),
+              )),
+            ),
+            if (groups.isEmpty)
+              const Center(child: Padding(
+                padding: EdgeInsets.only(bottom: 12),
+                child: Text('Add an expense to see your categories.',
+                  style: TextStyle(color: Colors.black54, fontSize: 12)),
+              ))
+            else
+              Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: groups.entries.map((entry) {
+                    final percentage = spent == 0 ? 0 :
+                        (entry.value * 100 / spent).round();
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withAlpha(190),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(icons[entry.key] ?? Icons.category,
+                          size: 15, color: categoryColor(entry.key)),
+                        const SizedBox(width: 5),
+                        Text('${entry.key} $percentage%',
+                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                      ]),
+                    );
+                  }).toList(),
+                ),
+              ),
+            Container(
+              height: 48,
+              decoration: BoxDecoration(
+                color: headerGreen,
+                borderRadius: BorderRadius.circular(5),
+              ),
+              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                const Icon(Icons.account_balance_wallet_outlined,
+                  size: 18, color: Colors.white),
+                const SizedBox(width: 8),
+                const Text('Balance', style: TextStyle(
+                  color: Colors.white, fontWeight: FontWeight.w600)),
+                const SizedBox(width: 10),
+                Flexible(child: FittedBox(fit: BoxFit.scaleDown,
+                  child: Text(money(balance), style: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)))),
+              ]),
+            ),
             const SizedBox(height: 18),
+            Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+              _FlowAction(
+                label: 'Expense',
+                icon: Icons.remove,
+                color: red,
+                onPressed: () => openEditor(),
+              ),
+              _FlowAction(
+                label: 'Income',
+                icon: Icons.add,
+                color: emerald,
+                onPressed: () => openEditor(type: 'income'),
+              ),
+            ]),
+            const SizedBox(height: 8),
             Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              const Text('Transactions', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              Text('${current.length} records', style: const TextStyle(color: Colors.black54)),
+              const Text('Recent transactions',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              Text('${current.length} records',
+                style: const TextStyle(color: Colors.black54, fontSize: 12)),
             ]),
             const SizedBox(height: 8),
             if (current.isEmpty) const Padding(padding: EdgeInsets.all(30),
@@ -319,19 +451,49 @@ class _MoneyHomeState extends State<MoneyHome> {
             ))),
           ],
         )),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
-      floatingActionButton: Row(mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          FloatingActionButton.extended(heroTag: 'exp', backgroundColor: red,
-            foregroundColor: Colors.white, onPressed: () => openEditor(),
-            icon: const Icon(Icons.remove), label: const Text('Expense')),
-          const SizedBox(width: 14),
-          FloatingActionButton.extended(heroTag: 'inc', backgroundColor: emerald,
-            foregroundColor: Colors.white, onPressed: () => openEditor(type: 'income'),
-            icon: const Icon(Icons.add), label: const Text('Income')),
-        ]),
     );
   }
+}
+
+class _FlowAction extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onPressed;
+  const _FlowAction({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    label: 'Add $label',
+    child: InkWell(
+      onTap: onPressed,
+      customBorder: const CircleBorder(),
+      child: SizedBox(
+        width: 100,
+        child: Column(children: [
+          Container(
+            width: 78,
+            height: 78,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.white.withAlpha(150),
+              border: Border.all(color: color.withAlpha(190), width: 3),
+            ),
+            child: Icon(icon, size: 36, color: color),
+          ),
+          const SizedBox(height: 5),
+          Text(label, style: TextStyle(
+            color: color, fontWeight: FontWeight.w700, fontSize: 12)),
+        ]),
+      ),
+    ),
+  );
 }
 
 Color categoryColor(String c) {
@@ -581,12 +743,12 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final json = await MoneyDatabase.instance.backupJson();
       final encrypted = await BackupTools.encryptedText(json, password);
-      final filename = 'MyMoney-${DateTime.now().toUtc().toIso8601String().replaceAll(':', '-')}.mymoney';
+      final filename = 'My-Money-${DateTime.now().toUtc().toIso8601String().replaceAll(':', '-')}.mymoney';
       await SharePlus.instance.share(ShareParams(
         files: [XFile.fromData(Uint8List.fromList(utf8.encode(encrypted)),
           name: filename, mimeType: 'application/octet-stream')],
-        subject: 'MyMoney encrypted backup',
-        text: 'Encrypted MyMoney backup. Keep the backup password separate and private.'));
+        subject: 'My Money encrypted backup',
+        text: 'Encrypted My Money backup. Keep the backup password separate and private.'));
       msg('Choose Gmail and send the attached backup to your own address.');
     } catch (e) {
       msg('Backup failed: $e');
@@ -798,7 +960,10 @@ class _SettingsPageState extends State<SettingsPage> {
             ListTile(leading: Icon(signedInUser == null
                 ? Icons.account_circle_outlined : Icons.verified_user_outlined),
               title: Text(signedInUser?.email ?? 'Google account'),
-              subtitle: Text(sync.errorMessage ?? sync.status.label),
+                subtitle: Text(sync.errorMessage ??
+                  (signedInUser == null
+                    ? 'Sign in with the same Google account on each device to sync your data.'
+                    : 'Same-account sync · ${sync.status.label}')),
               trailing: const Icon(Icons.chevron_right),
               enabled: !busy,
               onTap: signedInUser == null ? signIn : signOut),
