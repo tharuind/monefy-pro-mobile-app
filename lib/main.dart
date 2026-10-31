@@ -136,25 +136,173 @@ class _AppGateState extends State<AppGate> with WidgetsBindingObserver {
   }
   @override
   Widget build(BuildContext context) {
-    if (loading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    if (!locked) return const MoneyHome();
-    return Scaffold(body: SafeArea(child: Center(child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 350),
-      child: Padding(padding: const EdgeInsets.all(24), child: Column(
-        mainAxisSize: MainAxisSize.min, children: [
-          const Icon(Icons.lock, size: 60, color: emerald),
-          const SizedBox(height: 20),
-          const Text('Unlock My Money', style: TextStyle(fontSize: 27, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 20),
-          TextField(controller: pin, obscureText: true, keyboardType: TextInputType.number,
-            maxLength: 8, decoration: const InputDecoration(labelText: 'App PIN'),
-            onSubmitted: (_) => _unlock()),
-          FilledButton(onPressed: _unlock, child: const Text('Unlock')),
-          TextButton.icon(onPressed: _biometric, icon: const Icon(Icons.fingerprint),
-            label: const Text('Unlock with fingerprint')),
-        ],
-      )),
-    ))));
+    return AnimatedBuilder(
+      animation: CloudSyncService.instance,
+      builder: (context, _) {
+        if (loading) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()));
+        }
+        if (CloudSyncService.instance.user == null) {
+          return const AccountSignInPage();
+        }
+        if (!locked) return const MoneyHome();
+        return Scaffold(body: SafeArea(child: Center(child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 350),
+          child: Padding(padding: const EdgeInsets.all(24), child: Column(
+            mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.lock, size: 60, color: emerald),
+              const SizedBox(height: 20),
+              const Text('Unlock My Money', style: TextStyle(
+                fontSize: 27, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 20),
+              TextField(controller: pin, obscureText: true,
+                keyboardType: TextInputType.number, maxLength: 8,
+                decoration: const InputDecoration(labelText: 'App PIN'),
+                onSubmitted: (_) => _unlock()),
+              FilledButton(onPressed: _unlock, child: const Text('Unlock')),
+              TextButton.icon(onPressed: _biometric,
+                icon: const Icon(Icons.fingerprint),
+                label: const Text('Unlock with fingerprint')),
+            ],
+          )),
+        ))));
+      },
+    );
+  }
+}
+
+class AccountSignInPage extends StatefulWidget {
+  const AccountSignInPage({super.key});
+  @override
+  State<AccountSignInPage> createState() => _AccountSignInPageState();
+}
+
+class _AccountSignInPageState extends State<AccountSignInPage> {
+  final email = TextEditingController();
+  bool busy = false;
+  late final bool completingEmailLink;
+
+  @override
+  void initState() {
+    super.initState();
+    completingEmailLink = CloudSyncService.instance
+        .isEmailSignInLink(Uri.base.toString());
+  }
+
+  @override
+  void dispose() {
+    email.dispose();
+    super.dispose();
+  }
+
+  Future<void> continueWithEmail() async {
+    setState(() => busy = true);
+    try {
+      final sync = CloudSyncService.instance;
+      if (completingEmailLink) {
+        await sync.completeEmailSignIn(
+          email: email.text, link: Uri.base.toString());
+      } else {
+        await sync.sendEmailSignInLink(email.text);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Check your email, open the sign-in link, then confirm your email address here.')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not sign in: $error')));
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> continueWithGoogle() async {
+    setState(() => busy = true);
+    try {
+      await CloudSyncService.instance.signInWithGoogle();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not sign in: $error')));
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sync = CloudSyncService.instance;
+    return Scaffold(
+      body: SafeArea(child: Center(child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Card(child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.account_balance_wallet_outlined,
+                size: 52, color: emerald),
+              const SizedBox(height: 12),
+              const Text('Welcome to My Money',
+                style: TextStyle(fontSize: 25, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              const Text('Sign in to securely access your records on any device.',
+                textAlign: TextAlign.center),
+              const SizedBox(height: 6),
+              const Text('New accounts are created when you verify your email link.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.black54)),
+              const SizedBox(height: 24),
+              SizedBox(width: double.infinity, child: OutlinedButton.icon(
+                onPressed: busy || !sync.isConfigured ? null : continueWithGoogle,
+                icon: const Icon(Icons.g_mobiledata, size: 28),
+                label: const Text('Continue with Google'),
+              )),
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Row(children: [
+                  Expanded(child: Divider()), Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 12),
+                    child: Text('OR')),
+                  Expanded(child: Divider()),
+                ]),
+              ),
+              TextField(
+                controller: email,
+                keyboardType: TextInputType.emailAddress,
+                autocorrect: false,
+                decoration: const InputDecoration(
+                  labelText: 'Email address',
+                  prefixIcon: Icon(Icons.email_outlined),
+                ),
+                onSubmitted: (_) => continueWithEmail(),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(width: double.infinity, child: FilledButton(
+                onPressed: busy || !sync.isConfigured ? null : continueWithEmail,
+                child: Text(completingEmailLink
+                  ? 'Verify and continue' : 'Continue with email'),
+              )),
+              if (!sync.isConfigured) ...[
+                const SizedBox(height: 16),
+                Text(sync.errorMessage ??
+                    'Account sign-in needs Firebase configuration.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: red)),
+              ],
+              if (busy) ...[
+                const SizedBox(height: 18),
+                const CircularProgressIndicator(),
+              ],
+            ]),
+          )),
+        ),
+      ))),
+    );
   }
 }
 
@@ -852,8 +1000,8 @@ class _SettingsPageState extends State<SettingsPage> {
       await widget.onRestore();
       final sync = CloudSyncService.instance;
       msg(sync.status == SyncStatus.synced
-          ? 'Google account connected. All changes are synced.'
-          : 'Google account connected · ${sync.status.label}'
+          ? 'Account connected. All changes are synced.'
+          : 'Account connected · ${sync.status.label}'
             '${sync.errorMessage == null ? '' : ': ${sync.errorMessage}'}');
     } catch (e) {
       msg('Google sign-in or sync failed: $e');
@@ -1041,12 +1189,13 @@ class _SettingsPageState extends State<SettingsPage> {
           return Column(children: [
             ListTile(leading: Icon(signedInUser == null
                 ? Icons.account_circle_outlined : Icons.verified_user_outlined),
-              title: Text(signedInUser?.email ?? 'Google account'),
+              title: Text(signedInUser?.email ?? 'Account'),
                 subtitle: Text(sync.errorMessage ??
                   (signedInUser == null
-                    ? 'Sign in with the same Google account on each device to sync your data.'
-                    : 'Same-account sync · ${sync.status.label}')),
-              trailing: const Icon(Icons.chevron_right),
+                    ? 'Sign in to sync your data across devices.'
+                    : 'Account sync · ${sync.status.label}. Tap to switch accounts.')),
+              trailing: Icon(signedInUser == null
+                ? Icons.chevron_right : Icons.logout),
               enabled: !busy,
               onTap: signedInUser == null ? signIn : signOut),
             const Divider(height: 1),
@@ -1100,10 +1249,10 @@ class _SettingsPageState extends State<SettingsPage> {
         value: pinEnabled, onChanged: busy ? null : togglePin)),
       const SizedBox(height: 20),
       const Card(child: Padding(padding: EdgeInsets.all(16), child: Text(
-        'Privacy: Records stay in your phone’s app database. Backup files are '
-        'encrypted with your chosen password. Keep the password safe: we '
-        'cannot recover an encrypted backup without it. Automatic Gmail '
-        'email delivery is not included in this first version.'))),
+        'Privacy: Records sync to the signed-in account and are stored in a '
+        'separate local database for that account. Backup files are encrypted '
+        'with your chosen password. Keep the password safe: it cannot be '
+        'recovered if lost.'))),
       if (busy) const Center(child: Padding(padding: EdgeInsets.all(10),
         child: CircularProgressIndicator())),
     ]),

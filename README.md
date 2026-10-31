@@ -13,8 +13,10 @@
 - Add, rename, and remove income or expense categories. Removing a category
   asks which category should receive its existing transactions before deletion.
 - On-device SQLite with a migration-safe, durable sync outbox.
-- Google sign-in and per-user Firestore synchronization. Sign into the same
-  Google account on another device to download its transactions and categories.
+- Verified email-link sign-in and per-user Firestore synchronization. Sign
+  into the same email account on another device to download its transactions
+  and categories; a different email gets a separate account and local database.
+- Optional Google sign-in. Sign out from Settings to switch accounts.
 - PIN lock (in Android encrypted secure storage), optional biometric unlock.
 - Encrypted backup using password-derived AES-256-GCM and `.mymoney` file.
 - Android Share Sheet: choose Gmail to send encrypted backup manually.
@@ -63,15 +65,15 @@ private key or service-account credential in this app.
    files. The existing `web/` folder is already configured for the PWA; do
    not replace it with the unmodified generated template. On Windows, iOS
    builds require macOS/Xcode.
-2. Create a Firebase project. Add Android, iOS, and Web apps using the package
-   ID / bundle ID generated for this project. In Firebase Console → **Authentication
-   → Sign-in method**, enable **Google**. Add the deployed web hostname and
+2. Create a Firebase project and register a Web app. In Firebase Console →
+   **Authentication → Sign-in method**, enable **Email/Password** and its
+   **Email link (passwordless sign-in)** option. Google sign-in is also
+   available as an optional provider. Add the deployed web hostname and
    `localhost` to **Authorized domains**.
 3. Install FlutterFire CLI and configure the platforms. Register the Android
-   package ID generated for this app in Firebase, enable Google in Firebase
-   Authentication, and add the Android SHA-1 fingerprint to the Google OAuth
-   client. Keep the Web OAuth client ID; Android Google sign-in uses it as the
-   server client ID.
+   package ID generated for this app in Firebase. For native Android Google
+   sign-in, add the Android SHA-1 fingerprint to the Google OAuth client and
+   provide the Web OAuth client ID as `FIREBASE_WEB_CLIENT_ID`.
 
    ```powershell
    dart pub global activate flutterfire_cli
@@ -123,9 +125,11 @@ private key or service-account credential in this app.
    On iPhone/iPad, open the HTTPS site in Safari and choose **Share → Add to
    Home Screen**. Browser storage is origin-specific and can still be cleared
    by the browser or device, so keep encrypted backups.
-6. Open **Settings & Backup** and sign in with Google. Use that same Google
-   account on every device: existing local transactions are reconciled rather
-   than wiped, and a clean device downloads that account's cloud records.
+6. Open My Money and continue with an email sign-in link (or Google). Use the
+   same account on every device: existing local transactions are reconciled
+   rather than wiped, and a clean device downloads that account's cloud records.
+   Sign out to use a different account; its data is kept in a separate local
+   database and separate Firestore path.
    Use **Sync now** and wait for **Synced**. Sync retries on connectivity
    restoration and app resume. This is automatic cloud sync, not an email
    attachment; the separate encrypted email backup remains available in
@@ -148,10 +152,9 @@ The GitHub Actions workflow at
 `.github/workflows/deploy-cloudflare-pages.yml` builds the Flutter web app,
 runs analysis and tests, then deploys `build/web` to the Cloudflare Pages
 project `mymoney-pwa` whenever `main` is updated (or when started manually).
-When all Firebase Web values are configured, the Pages deployment uses Firebase
-Authentication and Firestore for same-Google-account sync. If they are absent,
-the workflow deploys a local-only version instead; browser data then stays on
-that device and does not sync. Email backup remains a separate manual feature.
+The Pages deployment requires Firebase Web configuration because users must
+sign in before opening their data. It uses Firebase Authentication and
+Firestore for per-account sync. Email backup remains a separate manual feature.
 
 Before deploying:
 
@@ -164,9 +167,9 @@ Before deploying:
    `CLOUDFLARE_ACCOUNT_ID`. Create a Cloudflare API token with **Account →
    Cloudflare Pages → Edit** permission. Never put the token in a workflow
    file or repository variable.
-3. In Firebase Authentication, add `mymoney-pwa.pages.dev` to the authorized
-   domains and enable Google as a sign-in provider. Deploy the restrictive
-   `firestore.rules` from this repository to the Firebase project.
+3. In Firebase Authentication, add `mymoney-pwa.pages.dev` to authorized
+   domains and enable Email/Password with email-link sign-in. Deploy the
+   restrictive `firestore.rules` from this repository to the Firebase project.
 4. The screenshot shows the Pages project connected to a different GitHub
    repository. The workflow deploys this workspace repository to the existing
    Pages project using Wrangler. In Cloudflare Pages → **Settings → Builds →
@@ -178,7 +181,8 @@ Before deploying:
    `mymoney-pwa.pages.dev` site.
 
 The Cloudflare account must already contain the Pages project named
-`mymoney-pwa`. Without Firebase settings the build explicitly warns that cloud sync is off.
+`mymoney-pwa`. The workflow stops if Firebase or Cloudflare deployment
+configuration is missing, rather than publishing an app that cannot sign in.
 
 ### Sync behavior and limitations
 
@@ -189,10 +193,11 @@ The Cloudflare account must already contain the Pages project named
 - Conflict policy is deterministic last-write-wins based on client UTC update
   time and device ID. Device clocks can differ; review and back up important
   data before first multi-device use.
-- A local database is bound to the first Google UID that signs in. Switching
-  accounts on the same app profile is blocked to avoid uploading one person's
-  offline records into another person's cloud space; use a separate app/browser
-  profile for another user.
+- Each Firebase UID uses a separate local SQLite database. Signing out closes
+  the active database; signing in with another email cannot read or upload the
+  previous account's local records. Existing unclaimed local records migrate
+  to the first account that signs in; data already linked to another UID is
+  never reassigned.
 - Transactions plus user-created accounts and income/expense categories
   synchronize. Renaming a custom catalog item also updates matching local
   transaction labels and queues those transactions; removing a custom item is
@@ -217,9 +222,9 @@ Use disposable test accounts/data first:
 3. Repeat edits and delete on two devices while offline, then reconnect both.
    Confirm both converge to the most recent `updatedAt` (device ID breaks an
    exact tie) and the deleted record stays deleted when its tombstone wins.
-4. Sign into a clean device and confirm it downloads the records. Try a
-   different Google account and confirm it cannot read the first user's
-   Firestore paths.
+4. Sign into a clean device and confirm it downloads the records. Sign out,
+   use a different email account, and confirm that account sees only its own
+   records locally and in its Firestore paths.
 5. On web, confirm the browser recognizes the manifest and service worker,
    finish one successful online app load, then reload in offline mode. Verify
    the app shell and SQLite data load for the same origin. Repeat in iPhone

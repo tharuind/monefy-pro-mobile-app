@@ -35,8 +35,10 @@ class CloudSyncService extends ChangeNotifier {
   bool _online = true;
   bool _running = false;
   Completer<void>? _syncInFlight;
+  Future<void> _accountTransition = Future<void>.value();
 
   User? get user => _configured ? FirebaseAuth.instance.currentUser : null;
+  bool get isConfigured => _configured;
 
   Future<void> initialize() async {
     try {
@@ -69,7 +71,7 @@ class CloudSyncService extends ChangeNotifier {
       _configured = true;
       _authSubscription = FirebaseAuth.instance.authStateChanges().listen((signedInUser) {
         if (signedInUser == null) {
-          unawaited(_updateLocalStatus());
+          unawaited(_handleSignedOut());
         } else {
           unawaited(_queueAndSyncForUser(signedInUser.uid).catchError((Object error) {
             errorMessage = '$error';
@@ -78,12 +80,11 @@ class CloudSyncService extends ChangeNotifier {
           }));
         }
       });
-      status = !_online ? SyncStatus.offline :
-        (await MoneyDatabase.instance.pendingCount() > 0 ||
-         (await MoneyDatabase.instance.list()).isNotEmpty
-          ? SyncStatus.pending : SyncStatus.synced);
+      status = _online ? SyncStatus.pending : SyncStatus.offline;
       notifyListeners();
-      if (_online && user != null) unawaited(syncNow());
+      if (user != null) {
+        await _queueAndSyncForUser(user!.uid);
+      }
     } catch (error) {
       errorMessage = 'Cloud sync initialization failed: $error';
       status = _online ? SyncStatus.pending : SyncStatus.offline;
@@ -118,32 +119,97 @@ class CloudSyncService extends ChangeNotifier {
     }
   }
 
+  Future<void> sendEmailSignInLink(String email) async {
+    if (!_configured) {
+      throw StateError('Firebase is not configured. Follow the setup steps in README.md.');
+    }
+    if (!kIsWeb) {
+      throw UnsupportedError('Email-link sign-in is currently available in the browser app.');
+    }
+    final normalizedEmail = email.trim();
+    if (normalizedEmail.isEmpty) throw ArgumentError('Enter your email address.');
+    await FirebaseAuth.instance.sendSignInLinkToEmail(
+      email: normalizedEmail,
+      actionCodeSettings: ActionCodeSettings(
+        url: Uri.base.origin,
+        handleCodeInApp: true,
+      ),
+    );
+  }
+
+  bool isEmailSignInLink(String link) =>
+      _configured && FirebaseAuth.instance.isSignInWithEmailLink(link);
+
+  Future<void> completeEmailSignIn({
+    required String email,
+    required String link,
+  }) async {
+    if (!_configured) {
+      throw StateError('Firebase is not configured. Follow the setup steps in README.md.');
+    }
+    if (!FirebaseAuth.instance.isSignInWithEmailLink(link)) {
+      throw ArgumentError('This is not a valid My Money sign-in link.');
+    }
+    await FirebaseAuth.instance.signInWithEmailLink(
+      email: email.trim(),
+      emailLink: link,
+    );
+    final signedInUser = FirebaseAuth.instance.currentUser;
+    if (signedInUser == null || !signedInUser.emailVerified) {
+      await FirebaseAuth.instance.signOut();
+      throw StateError('Verify your email using the sign-in link and try again.');
+    }
+    await _queueAndSyncForUser(signedInUser.uid);
+  }
+
   Future<void> _queueAndSyncForUser(String uid) async {
-    await MoneyDatabase.instance.bindUser(uid);
-    await MoneyDatabase.instance.enqueueAllLocal();
-    await syncNow();
+    final transition = _accountTransition.then((_) async {
+      if (_running) await _syncInFlight?.future;
+      await MoneyDatabase.instance.activateUser(uid);
+      await MoneyDatabase.instance.enqueueAllLocal();
+      await syncNow();
+    });
+    _accountTransition = transition.catchError((Object _) {});
+    await transition;
+  }
+
+  Future<void> _handleSignedOut() async {
+    await _accountTransition;
+    if (_running) await _syncInFlight?.future;
+    await MoneyDatabase.instance.deactivateUser();
+    status = _online ? SyncStatus.pending : SyncStatus.offline;
+    notifyListeners();
   }
 
   Future<void> signOut() async {
     if (!_configured) return;
+    await _accountTransition;
+    if (_running) await _syncInFlight?.future;
     if (!kIsWeb) await GoogleSignIn().signOut();
     await FirebaseAuth.instance.signOut();
-    status = await MoneyDatabase.instance.pendingCount() > 0
-        ? SyncStatus.pending : SyncStatus.synced;
-    notifyListeners();
+    await MoneyDatabase.instance.deactivateUser();
   }
 
   Future<void> onResume() async {
     _online = (await Connectivity().checkConnectivity())
         .any((result) => result != ConnectivityResult.none);
     if (_configured) {
-      await syncNow();
+      if (user != null) {
+        await syncNow();
+      } else {
+        await _updateLocalStatus();
+      }
     } else {
       await _updateLocalStatus();
     }
   }
 
   Future<void> _updateLocalStatus() async {
+    if (user == null) {
+      status = _online ? SyncStatus.pending : SyncStatus.offline;
+      notifyListeners();
+      return;
+    }
     final count = await MoneyDatabase.instance.pendingCount();
     status = !_online ? SyncStatus.offline :
       (count > 0 || !_configured ? SyncStatus.pending : SyncStatus.synced);
@@ -170,7 +236,6 @@ class CloudSyncService extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    final pendingCount = await MoneyDatabase.instance.pendingCount();
     final currentUser = user;
     if (!_online) {
       status = SyncStatus.offline;
@@ -178,12 +243,12 @@ class CloudSyncService extends ChangeNotifier {
       return;
     }
     if (currentUser == null) {
-      status = pendingCount > 0 || (await MoneyDatabase.instance.list()).isNotEmpty
-          ? SyncStatus.pending : SyncStatus.synced;
+      status = SyncStatus.pending;
       notifyListeners();
       return;
     }
     try {
+      await MoneyDatabase.instance.activateUser(currentUser.uid);
       await MoneyDatabase.instance.bindUser(currentUser.uid);
     } catch (error) {
       errorMessage = '$error';
@@ -191,6 +256,7 @@ class CloudSyncService extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    final pendingCount = await MoneyDatabase.instance.pendingCount();
     if (_running) {
       await _syncInFlight?.future;
       return;

@@ -60,14 +60,25 @@ class MoneyDatabase {
   MoneyDatabase._();
   static final instance = MoneyDatabase._();
   Database? _database;
+  String? _databaseUid;
   static const _uuid = Uuid();
 
   Future<Database> get db async {
     if (_database != null) return _database!;
+    final uid = _databaseUid;
+    if (uid == null) {
+      throw StateError('Sign in before opening account data.');
+    }
     if (kIsWeb) databaseFactory = databaseFactoryFfiWeb;
-    final dbPath = kIsWeb ? 'mymoney.sqlite' :
-      p.join(await getDatabasesPath(), 'mymoney.sqlite');
-    _database = await openDatabase(dbPath,
+    final databaseName = 'mymoney-${uid.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_')}.sqlite';
+    final dbPath = kIsWeb ? databaseName :
+      p.join(await getDatabasesPath(), databaseName);
+    _database = await _openDatabase(dbPath);
+    await _prepareLegacyRows(_database!);
+    return _database!;
+  }
+
+  Future<Database> _openDatabase(String path) => openDatabase(path,
       version: 3, onCreate: (d, version) async {
         await d.execute('''CREATE TABLE entries (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,8 +106,61 @@ class MoneyDatabase {
         }
         if (oldVersion < 3) await _createCatalogTable(d);
       });
-    await _prepareLegacyRows(_database!);
-    return _database!;
+
+  Future<void> activateUser(String uid) async {
+    if (uid.isEmpty) throw ArgumentError('A signed-in account is required.');
+    if (_databaseUid == uid && _database != null) return;
+    await _database?.close();
+    _database = null;
+    _databaseUid = uid;
+    try {
+      final d = await db;
+      final owner = await d.query('metadata', where: 'key = ?',
+        whereArgs: ['owner_uid'], limit: 1);
+      if (owner.isEmpty) await _migrateLegacyData(d, uid);
+      await bindUser(uid);
+    } catch (_) {
+      await _database?.close();
+      _database = null;
+      _databaseUid = null;
+      rethrow;
+    }
+  }
+
+  Future<void> _migrateLegacyData(Database destination, String uid) async {
+    if (kIsWeb) databaseFactory = databaseFactoryFfiWeb;
+    final oldPath = kIsWeb ? 'mymoney.sqlite' :
+      p.join(await getDatabasesPath(), 'mymoney.sqlite');
+    if (!await databaseFactory.databaseExists(oldPath)) return;
+    final legacy = await _openDatabase(oldPath);
+    try {
+      await _prepareLegacyRows(legacy);
+      final ownerRows = await legacy.query('metadata',
+        where: 'key = ?', whereArgs: ['owner_uid'], limit: 1);
+      if (ownerRows.isNotEmpty && ownerRows.first['value'] != uid) return;
+      final availableTables = (await legacy.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type = 'table'"))
+          .map((row) => row['name'] as String).toSet();
+      const tables = ['entries', 'sync_queue', 'metadata', 'catalog_items'];
+      await destination.transaction((tx) async {
+        for (final table in tables) {
+          if (!availableTables.contains(table)) continue;
+          for (final row in await legacy.query(table)) {
+            await tx.insert(table, row,
+              conflictAlgorithm: ConflictAlgorithm.ignore);
+          }
+        }
+      });
+    } finally {
+      await legacy.close();
+    }
+  }
+
+  Future<void> deactivateUser() async {
+    final activeDatabase = _database;
+    _database = null;
+    _databaseUid = null;
+    await activeDatabase?.close();
   }
 
   Future<void> _createSyncQueue(DatabaseExecutor d) async {

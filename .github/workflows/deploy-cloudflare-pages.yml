@@ -47,7 +47,7 @@ jobs:
             if [ -z "${!name}" ]; then firebase_configured=false; fi
           done
           if [ "$firebase_configured" = true ]; then
-            echo "Building with Google sign-in and Firebase cloud sync."
+            echo "Building with email-link sign-in and Firebase account sync."
             flutter build web --release \
               --dart-define=FIREBASE_CONFIGURED=true \
               --dart-define="FIREBASE_API_KEY=$FIREBASE_API_KEY" \
@@ -56,8 +56,8 @@ jobs:
               --dart-define="FIREBASE_MESSAGING_SENDER_ID=$FIREBASE_MESSAGING_SENDER_ID" \
               --dart-define="FIREBASE_AUTH_DOMAIN=$FIREBASE_AUTH_DOMAIN"
           else
-            echo "::warning::Firebase configuration is missing; deploying local-only mode. Data will not sync between devices."
-            flutter build web --release
+            echo "::error::Firebase configuration is required for account sign-in and cloud sync."
+            exit 1
           fi
 
       - name: Deploy to Cloudflare Pages
