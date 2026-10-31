@@ -138,6 +138,10 @@ class MoneyDatabase {
       final ownerRows = await legacy.query('metadata',
         where: 'key = ?', whereArgs: ['owner_uid'], limit: 1);
       if (ownerRows.isNotEmpty && ownerRows.first['value'] != uid) return;
+      if (ownerRows.isEmpty) {
+        await legacy.insert('metadata', {'key': 'owner_uid', 'value': uid},
+          conflictAlgorithm: ConflictAlgorithm.replace);
+      }
       final availableTables = (await legacy.rawQuery(
         "SELECT name FROM sqlite_master WHERE type = 'table'"))
           .map((row) => row['name'] as String).toSet();

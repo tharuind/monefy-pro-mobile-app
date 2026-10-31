@@ -73,7 +73,242 @@ class MyMoneyApp extends StatelessWidget {
         filled: true, fillColor: Colors.white,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(14))),
     ),
-    home: const AppGate(),
+    home: const AccountGate(),
+  );
+}
+
+class AccountGate extends StatelessWidget {
+  const AccountGate({super.key});
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: CloudSyncService.instance,
+    builder: (context, _) {
+      final sync = CloudSyncService.instance;
+      if (!sync.isConfigured) {
+        return Scaffold(body: Center(child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(sync.errorMessage ??
+            'Account sign-in requires Firebase configuration.',
+            textAlign: TextAlign.center),
+        )));
+      }
+      if (sync.user?.emailVerified == true) return const AppGate();
+      return const EmailSignInPage();
+    },
+  );
+}
+
+class EmailSignInPage extends StatefulWidget {
+  const EmailSignInPage({super.key});
+  @override
+  State<EmailSignInPage> createState() => _EmailSignInPageState();
+}
+
+class _EmailSignInPageState extends State<EmailSignInPage> {
+  final email = TextEditingController();
+  bool busy = false;
+  bool linkSent = false;
+  String? error;
+
+  bool get completingLink =>
+    CloudSyncService.instance.isEmailSignInLink(Uri.base.toString());
+
+  @override
+  void initState() {
+    super.initState();
+    _restoreEmail();
+  }
+
+  Future<void> _restoreEmail() async {
+    final saved = await vault.read(key: 'pending-email-sign-in');
+    if (mounted && saved != null && email.text.isEmpty) {
+      setState(() => email.text = saved);
+      if (completingLink) {
+        await _completeEmailSignIn(saved);
+      }
+    }
+  }
+
+  Future<void> _completeEmailSignIn(String address) async {
+    setState(() { busy = true; error = null; });
+    try {
+      await CloudSyncService.instance.completeEmailSignIn(
+        email: address, link: Uri.base.toString());
+      await vault.delete(key: 'pending-email-sign-in');
+    } catch (e) {
+      if (mounted) setState(() => error = 'Could not verify this email link: $e');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> continueWithEmail() async {
+    final address = email.text.trim();
+    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(address)) {
+      setState(() => error = 'Enter a valid email address.');
+      return;
+    }
+    setState(() { busy = true; error = null; });
+    try {
+      if (completingLink) {
+        await _completeEmailSignIn(address);
+      } else {
+        await vault.write(key: 'pending-email-sign-in', value: address);
+        await CloudSyncService.instance.sendEmailSignInLink(address);
+        if (mounted) setState(() => linkSent = true);
+      }
+    } catch (e) {
+      if (mounted) setState(() => error = 'Could not continue with email: $e');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> sendAnotherLink() async {
+    final address = email.text.trim();
+    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(address)) {
+      setState(() => error = 'Enter a valid email address.');
+      return;
+    }
+    setState(() { busy = true; error = null; });
+    try {
+      await vault.write(key: 'pending-email-sign-in', value: address);
+      await CloudSyncService.instance.sendEmailSignInLink(address);
+      if (mounted) setState(() => linkSent = true);
+    } catch (e) {
+      if (mounted) setState(() => error = 'Could not send another link: $e');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> continueWithGoogle() async {
+    setState(() { busy = true; error = null; });
+    try {
+      await CloudSyncService.instance.signInWithGoogle();
+      await vault.delete(key: 'pending-email-sign-in');
+    } catch (e) {
+      if (mounted) setState(() => error = 'Google sign-in failed: $e');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    email.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: const Color(0xFF151719),
+    body: SafeArea(child: Center(child: SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 440),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(
+            completingLink
+              ? 'Verify your email to open My Money'
+              : 'Sign in to keep your money in sync',
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 34, height: 1.15,
+              fontFamily: 'Georgia', color: Color(0xFFE5E6E8)),
+          ),
+          const SizedBox(height: 34),
+          SizedBox(width: double.infinity, height: 52,
+            child: FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFE1E3E6),
+                foregroundColor: const Color(0xFF17191B),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: busy ? null : continueWithGoogle,
+              child: const Row(mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('G', style: TextStyle(fontWeight: FontWeight.w900,
+                    fontSize: 19)),
+                  SizedBox(width: 10),
+                  Text('Continue with Google',
+                    style: TextStyle(fontSize: 16)),
+                ]),
+            )),
+          const SizedBox(height: 22),
+          const Divider(color: Color(0xFF343638)),
+          const SizedBox(height: 20),
+          TextField(
+            controller: email,
+            enabled: !busy,
+            keyboardType: TextInputType.emailAddress,
+            autofillHints: const [AutofillHints.email],
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: 'Enter your email',
+              hintStyle: const TextStyle(color: Color(0xFF85878A)),
+              filled: true,
+              fillColor: const Color(0xFF1B1D20),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: Color(0xFF3A3C3F))),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: Color(0xFFB8BBC0))),
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(width: double.infinity, height: 50,
+            child: FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF202225),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: busy || !kIsWeb ? null : continueWithEmail,
+              child: busy
+                ? const SizedBox(width: 22, height: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : Text(completingLink
+                    ? 'Verify email and continue' : 'Continue with email'),
+            )),
+          if (!kIsWeb) ...[
+            const SizedBox(height: 12),
+            const Text('Email-link sign-in is available on the web app. '
+              'Use Google on this device.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Color(0xFF9B9DA1), fontSize: 13)),
+          ],
+          if (linkSent) ...[
+            const SizedBox(height: 16),
+            const Text(
+              'Check your inbox for a secure sign-in link. Open it in a browser '
+              'and confirm the same email if asked. The first sign-in creates '
+              'your account.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Color(0xFFC9CBCE)),
+            ),
+          ],
+          if (error != null) ...[
+            const SizedBox(height: 16),
+            Text(error!, textAlign: TextAlign.center,
+              style: const TextStyle(color: Color(0xFFFF8B8B))),
+            if (completingLink)
+              TextButton(
+                onPressed: busy ? null : sendAnotherLink,
+                child: const Text('Send a fresh sign-in link'),
+              ),
+          ],
+          const SizedBox(height: 24),
+          const Text(
+            'Each email has its own private account and synced records.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Color(0xFF9B9DA1), fontSize: 13),
+          ),
+        ]),
+      ),
+    ))),
   );
 }
 
@@ -136,173 +371,25 @@ class _AppGateState extends State<AppGate> with WidgetsBindingObserver {
   }
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: CloudSyncService.instance,
-      builder: (context, _) {
-        if (loading) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()));
-        }
-        if (CloudSyncService.instance.user == null) {
-          return const AccountSignInPage();
-        }
-        if (!locked) return const MoneyHome();
-        return Scaffold(body: SafeArea(child: Center(child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 350),
-          child: Padding(padding: const EdgeInsets.all(24), child: Column(
-            mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.lock, size: 60, color: emerald),
-              const SizedBox(height: 20),
-              const Text('Unlock My Money', style: TextStyle(
-                fontSize: 27, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 20),
-              TextField(controller: pin, obscureText: true,
-                keyboardType: TextInputType.number, maxLength: 8,
-                decoration: const InputDecoration(labelText: 'App PIN'),
-                onSubmitted: (_) => _unlock()),
-              FilledButton(onPressed: _unlock, child: const Text('Unlock')),
-              TextButton.icon(onPressed: _biometric,
-                icon: const Icon(Icons.fingerprint),
-                label: const Text('Unlock with fingerprint')),
-            ],
-          )),
-        ))));
-      },
-    );
-  }
-}
-
-class AccountSignInPage extends StatefulWidget {
-  const AccountSignInPage({super.key});
-  @override
-  State<AccountSignInPage> createState() => _AccountSignInPageState();
-}
-
-class _AccountSignInPageState extends State<AccountSignInPage> {
-  final email = TextEditingController();
-  bool busy = false;
-  late final bool completingEmailLink;
-
-  @override
-  void initState() {
-    super.initState();
-    completingEmailLink = CloudSyncService.instance
-        .isEmailSignInLink(Uri.base.toString());
-  }
-
-  @override
-  void dispose() {
-    email.dispose();
-    super.dispose();
-  }
-
-  Future<void> continueWithEmail() async {
-    setState(() => busy = true);
-    try {
-      final sync = CloudSyncService.instance;
-      if (completingEmailLink) {
-        await sync.completeEmailSignIn(
-          email: email.text, link: Uri.base.toString());
-      } else {
-        await sync.sendEmailSignInLink(email.text);
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Check your email, open the sign-in link, then confirm your email address here.')));
-      }
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not sign in: $error')));
-      }
-    } finally {
-      if (mounted) setState(() => busy = false);
-    }
-  }
-
-  Future<void> continueWithGoogle() async {
-    setState(() => busy = true);
-    try {
-      await CloudSyncService.instance.signInWithGoogle();
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not sign in: $error')));
-      }
-    } finally {
-      if (mounted) setState(() => busy = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final sync = CloudSyncService.instance;
-    return Scaffold(
-      body: SafeArea(child: Center(child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Card(child: Padding(
-            padding: const EdgeInsets.all(28),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.account_balance_wallet_outlined,
-                size: 52, color: emerald),
-              const SizedBox(height: 12),
-              const Text('Welcome to My Money',
-                style: TextStyle(fontSize: 25, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              const Text('Sign in to securely access your records on any device.',
-                textAlign: TextAlign.center),
-              const SizedBox(height: 6),
-              const Text('New accounts are created when you verify your email link.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.black54)),
-              const SizedBox(height: 24),
-              SizedBox(width: double.infinity, child: OutlinedButton.icon(
-                onPressed: busy || !sync.isConfigured ? null : continueWithGoogle,
-                icon: const Icon(Icons.g_mobiledata, size: 28),
-                label: const Text('Continue with Google'),
-              )),
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 16),
-                child: Row(children: [
-                  Expanded(child: Divider()), Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 12),
-                    child: Text('OR')),
-                  Expanded(child: Divider()),
-                ]),
-              ),
-              TextField(
-                controller: email,
-                keyboardType: TextInputType.emailAddress,
-                autocorrect: false,
-                decoration: const InputDecoration(
-                  labelText: 'Email address',
-                  prefixIcon: Icon(Icons.email_outlined),
-                ),
-                onSubmitted: (_) => continueWithEmail(),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(width: double.infinity, child: FilledButton(
-                onPressed: busy || !sync.isConfigured ? null : continueWithEmail,
-                child: Text(completingEmailLink
-                  ? 'Verify and continue' : 'Continue with email'),
-              )),
-              if (!sync.isConfigured) ...[
-                const SizedBox(height: 16),
-                Text(sync.errorMessage ??
-                    'Account sign-in needs Firebase configuration.',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: red)),
-              ],
-              if (busy) ...[
-                const SizedBox(height: 18),
-                const CircularProgressIndicator(),
-              ],
-            ]),
-          )),
-        ),
-      ))),
-    );
+    if (loading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (!locked) return const MoneyHome();
+    return Scaffold(body: SafeArea(child: Center(child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 350),
+      child: Padding(padding: const EdgeInsets.all(24), child: Column(
+        mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.lock, size: 60, color: emerald),
+          const SizedBox(height: 20),
+          const Text('Unlock My Money', style: TextStyle(fontSize: 27, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 20),
+          TextField(controller: pin, obscureText: true, keyboardType: TextInputType.number,
+            maxLength: 8, decoration: const InputDecoration(labelText: 'App PIN'),
+            onSubmitted: (_) => _unlock()),
+          FilledButton(onPressed: _unlock, child: const Text('Unlock')),
+          TextButton.icon(onPressed: _biometric, icon: const Icon(Icons.fingerprint),
+            label: const Text('Unlock with fingerprint')),
+        ],
+      )),
+    ))));
   }
 }
 
@@ -1004,7 +1091,7 @@ class _SettingsPageState extends State<SettingsPage> {
           : 'Account connected · ${sync.status.label}'
             '${sync.errorMessage == null ? '' : ': ${sync.errorMessage}'}');
     } catch (e) {
-      msg('Google sign-in or sync failed: $e');
+      msg('Account sign-in or sync failed: $e');
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -1154,7 +1241,7 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() => busy = true);
     try {
       await CloudSyncService.instance.signOut();
-      if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
+      msg('Signed out. Your local records remain on this device.');
     } catch (e) {
       msg('Unable to sign out: $e');
     } finally {
@@ -1192,10 +1279,9 @@ class _SettingsPageState extends State<SettingsPage> {
               title: Text(signedInUser?.email ?? 'Account'),
                 subtitle: Text(sync.errorMessage ??
                   (signedInUser == null
-                    ? 'Sign in to sync your data across devices.'
-                    : 'Account sync · ${sync.status.label}. Tap to switch accounts.')),
-              trailing: Icon(signedInUser == null
-                ? Icons.chevron_right : Icons.logout),
+                    ? 'Sign in with the same verified email on each device to sync your data.'
+                    : 'Private account sync · ${sync.status.label}')),
+              trailing: const Icon(Icons.chevron_right),
               enabled: !busy,
               onTap: signedInUser == null ? signIn : signOut),
             const Divider(height: 1),
@@ -1249,10 +1335,10 @@ class _SettingsPageState extends State<SettingsPage> {
         value: pinEnabled, onChanged: busy ? null : togglePin)),
       const SizedBox(height: 20),
       const Card(child: Padding(padding: EdgeInsets.all(16), child: Text(
-        'Privacy: Records sync to the signed-in account and are stored in a '
-        'separate local database for that account. Backup files are encrypted '
-        'with your chosen password. Keep the password safe: it cannot be '
-        'recovered if lost.'))),
+        'Privacy: Records stay in your phone’s app database. Backup files are '
+        'encrypted with your chosen password. Keep the password safe: we '
+        'cannot recover an encrypted backup without it. Automatic Gmail '
+        'email delivery is not included in this first version.'))),
       if (busy) const Center(child: Padding(padding: EdgeInsets.all(10),
         child: CircularProgressIndicator())),
     ]),
