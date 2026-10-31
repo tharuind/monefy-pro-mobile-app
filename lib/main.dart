@@ -506,22 +506,6 @@ String _month(int m) => const [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'][m - 1];
 
-class _MiniTotal extends StatelessWidget {
-  final String title;
-  final int cents;
-  final Color color;
-  final IconData icon;
-  const _MiniTotal(this.title, this.cents, this.color, this.icon);
-  @override
-  Widget build(BuildContext context) => Row(children: [
-    Icon(icon, color: color), const SizedBox(width: 7),
-    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
-      children: [Text(title, style: const TextStyle(color: Colors.black54)),
-        FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
-          child: Text(money(cents), style: TextStyle(color: color, fontWeight: FontWeight.bold)))])),
-  ]);
-}
-
 class DonutPainter extends CustomPainter {
   final Map<String, int> totals;
   DonutPainter(this.totals);
