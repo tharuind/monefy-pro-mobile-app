@@ -152,7 +152,7 @@ account sync; email backup remains a separate manual feature.
 Before deploying:
 
 1. In GitHub repository **Settings → Secrets and variables → Actions**, add
-   these repository variables: `FIREBASE_API_KEY`, `FIREBASE_WEB_APP_ID`,
+   these repository variables (or secrets): `FIREBASE_API_KEY`, `FIREBASE_WEB_APP_ID`,
    `FIREBASE_PROJECT_ID`, `FIREBASE_MESSAGING_SENDER_ID`, and
    `FIREBASE_AUTH_DOMAIN`.
 2. Add repository secrets `CLOUDFLARE_API_TOKEN` and
