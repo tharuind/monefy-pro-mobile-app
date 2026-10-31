@@ -42,19 +42,23 @@ jobs:
           FIREBASE_MESSAGING_SENDER_ID: ${{ vars.FIREBASE_MESSAGING_SENDER_ID || secrets.FIREBASE_MESSAGING_SENDER_ID }}
           FIREBASE_AUTH_DOMAIN: ${{ vars.FIREBASE_AUTH_DOMAIN || secrets.FIREBASE_AUTH_DOMAIN }}
         run: |
+          firebase_configured=true
           for name in FIREBASE_API_KEY FIREBASE_WEB_APP_ID FIREBASE_PROJECT_ID FIREBASE_MESSAGING_SENDER_ID FIREBASE_AUTH_DOMAIN; do
-            if [ -z "${!name}" ]; then
-              echo "::error::Set the $name repository variable before deploying the cloud-sync PWA."
-              exit 1
-            fi
+            if [ -z "${!name}" ]; then firebase_configured=false; fi
           done
-          flutter build web --release \
-            --dart-define=FIREBASE_CONFIGURED=true \
-            --dart-define="FIREBASE_API_KEY=$FIREBASE_API_KEY" \
-            --dart-define="FIREBASE_WEB_APP_ID=$FIREBASE_WEB_APP_ID" \
-            --dart-define="FIREBASE_PROJECT_ID=$FIREBASE_PROJECT_ID" \
-            --dart-define="FIREBASE_MESSAGING_SENDER_ID=$FIREBASE_MESSAGING_SENDER_ID" \
-            --dart-define="FIREBASE_AUTH_DOMAIN=$FIREBASE_AUTH_DOMAIN"
+          if [ "$firebase_configured" = true ]; then
+            echo "Building with Google sign-in and Firebase cloud sync."
+            flutter build web --release \
+              --dart-define=FIREBASE_CONFIGURED=true \
+              --dart-define="FIREBASE_API_KEY=$FIREBASE_API_KEY" \
+              --dart-define="FIREBASE_WEB_APP_ID=$FIREBASE_WEB_APP_ID" \
+              --dart-define="FIREBASE_PROJECT_ID=$FIREBASE_PROJECT_ID" \
+              --dart-define="FIREBASE_MESSAGING_SENDER_ID=$FIREBASE_MESSAGING_SENDER_ID" \
+              --dart-define="FIREBASE_AUTH_DOMAIN=$FIREBASE_AUTH_DOMAIN"
+          else
+            echo "::warning::Firebase configuration is missing; deploying local-only mode. Data will not sync between devices."
+            flutter build web --release
+          fi
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v4

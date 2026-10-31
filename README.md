@@ -146,13 +146,16 @@ The GitHub Actions workflow at
 `.github/workflows/deploy-cloudflare-pages.yml` builds the Flutter web app,
 runs analysis and tests, then deploys `build/web` to the Cloudflare Pages
 project `mymoney-pwa` whenever `main` is updated (or when started manually).
-The Pages deployment uses Firebase Authentication and Firestore for same-Google
-account sync; email backup remains a separate manual feature.
+When all Firebase Web values are configured, the Pages deployment uses Firebase
+Authentication and Firestore for same-Google-account sync. If they are absent,
+the workflow deploys a local-only version instead; browser data then stays on
+that device and does not sync. Email backup remains a separate manual feature.
 
 Before deploying:
 
 1. In GitHub repository **Settings → Secrets and variables → Actions**, add
-   these repository variables (or secrets): `FIREBASE_API_KEY`, `FIREBASE_WEB_APP_ID`,
+   these repository variables (or secrets) for cross-device sync:
+   `FIREBASE_API_KEY`, `FIREBASE_WEB_APP_ID`,
    `FIREBASE_PROJECT_ID`, `FIREBASE_MESSAGING_SENDER_ID`, and
    `FIREBASE_AUTH_DOMAIN`.
 2. Add repository secrets `CLOUDFLARE_API_TOKEN` and
@@ -173,8 +176,7 @@ Before deploying:
    `mymoney-pwa.pages.dev` site.
 
 The Cloudflare account must already contain the Pages project named
-`mymoney-pwa`. The workflow fails with an explicit error if Firebase build
-variables are missing.
+`mymoney-pwa`. Without Firebase settings the build explicitly warns that cloud sync is off.
 
 ### Sync behavior and limitations
 
