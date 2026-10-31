@@ -140,6 +140,42 @@ important. For subsequent app releases, change `CACHE_VERSION` in
 `web/service-worker.js` so installed clients discard cached assets from the
 previous release.
 
+### Deploy the PWA to Cloudflare Pages
+
+The GitHub Actions workflow at
+`.github/workflows/deploy-cloudflare-pages.yml` builds the Flutter web app,
+runs analysis and tests, then deploys `build/web` to the Cloudflare Pages
+project `mymoney-pwa` whenever `main` is updated (or when started manually).
+The Pages deployment uses Firebase Authentication and Firestore for same-Google
+account sync; email backup remains a separate manual feature.
+
+Before deploying:
+
+1. In GitHub repository **Settings → Secrets and variables → Actions**, add
+   these repository variables: `FIREBASE_API_KEY`, `FIREBASE_WEB_APP_ID`,
+   `FIREBASE_PROJECT_ID`, `FIREBASE_MESSAGING_SENDER_ID`, and
+   `FIREBASE_AUTH_DOMAIN`.
+2. Add repository secrets `CLOUDFLARE_API_TOKEN` and
+   `CLOUDFLARE_ACCOUNT_ID`. Create a Cloudflare API token with **Account →
+   Cloudflare Pages → Edit** permission. Never put the token in a workflow
+   file or repository variable.
+3. In Firebase Authentication, add `mymoney-pwa.pages.dev` to the authorized
+   domains and enable Google as a sign-in provider. Deploy the restrictive
+   `firestore.rules` from this repository to the Firebase project.
+4. The screenshot shows the Pages project connected to a different GitHub
+   repository. The workflow deploys this workspace repository to the existing
+   Pages project using Wrangler. In Cloudflare Pages → **Settings → Builds →
+   Branch control**, disable automatic production and preview deployments for
+   the old Git connection; otherwise it may overwrite a Wrangler deployment.
+5. Push the workflow to `main`, then check GitHub **Actions** for
+   **Deploy My Money to Cloudflare Pages**. It also supports **Run workflow**
+   for a manual deploy. Wait for the deployment to finish before checking the
+   `mymoney-pwa.pages.dev` site.
+
+The Cloudflare account must already contain the Pages project named
+`mymoney-pwa`. The workflow fails with an explicit error if Firebase build
+variables are missing.
+
 ### Sync behavior and limitations
 
 - Firestore paths are `users/{uid}/transactions/{transactionUuid}`; Firebase

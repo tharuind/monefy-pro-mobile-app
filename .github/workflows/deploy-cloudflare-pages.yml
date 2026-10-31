@@ -1,0 +1,65 @@
+name: Deploy My Money to Cloudflare Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Prepare SQLite web assets
+        run: dart run sqflite_common_ffi_web:setup
+
+      - name: Analyze and test
+        run: |
+          flutter analyze --no-fatal-infos
+          flutter test
+
+      - name: Build web app
+        env:
+          FIREBASE_API_KEY: ${{ vars.FIREBASE_API_KEY }}
+          FIREBASE_WEB_APP_ID: ${{ vars.FIREBASE_WEB_APP_ID }}
+          FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+          FIREBASE_MESSAGING_SENDER_ID: ${{ vars.FIREBASE_MESSAGING_SENDER_ID }}
+          FIREBASE_AUTH_DOMAIN: ${{ vars.FIREBASE_AUTH_DOMAIN }}
+        run: |
+          for name in FIREBASE_API_KEY FIREBASE_WEB_APP_ID FIREBASE_PROJECT_ID FIREBASE_MESSAGING_SENDER_ID FIREBASE_AUTH_DOMAIN; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Set the $name repository variable before deploying the cloud-sync PWA."
+              exit 1
+            fi
+          done
+          flutter build web --release \
+            --dart-define=FIREBASE_CONFIGURED=true \
+            --dart-define="FIREBASE_API_KEY=$FIREBASE_API_KEY" \
+            --dart-define="FIREBASE_WEB_APP_ID=$FIREBASE_WEB_APP_ID" \
+            --dart-define="FIREBASE_PROJECT_ID=$FIREBASE_PROJECT_ID" \
+            --dart-define="FIREBASE_MESSAGING_SENDER_ID=$FIREBASE_MESSAGING_SENDER_ID" \
+            --dart-define="FIREBASE_AUTH_DOMAIN=$FIREBASE_AUTH_DOMAIN"
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          command: pages deploy build/web --project-name=mymoney-pwa --branch=main
