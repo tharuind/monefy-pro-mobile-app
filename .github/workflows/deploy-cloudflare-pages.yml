@@ -63,4 +63,4 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
-          command: pages deploy build/web --project-name=mymoney-pwa --branch=main
+command: pages deploy build/web --project-name=mymoney-pwa-pages --branch=main
