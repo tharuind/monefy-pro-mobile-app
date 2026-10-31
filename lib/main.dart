@@ -1154,7 +1154,7 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() => busy = true);
     try {
       await CloudSyncService.instance.signOut();
-      msg('Signed out. Your local records remain on this device.');
+      if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
     } catch (e) {
       msg('Unable to sign out: $e');
     } finally {
