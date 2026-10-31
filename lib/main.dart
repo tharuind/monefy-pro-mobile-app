@@ -225,6 +225,7 @@ class _MoneyHomeState extends State<MoneyHome> {
 
   Future<void> openEditor({MoneyEntry? entry, String type = 'expense'}) async {
     final database = MoneyDatabase.instance;
+    await database.ensureDefaultCategories(expenses, incomes);
     final catalog = await Future.wait([
       database.catalogNames('account'),
       database.catalogNames('expense_category'),
@@ -557,8 +558,8 @@ class _EntryEditorState extends State<EntryEditor> {
   }
   List<String> get categoryOptions {
     final result = type == 'income'
-        ? [...incomes, ...widget.extraIncomes]
-        : [...expenses, ...widget.extraExpenses];
+        ? [...widget.extraIncomes]
+        : [...widget.extraExpenses];
     if (widget.entry != null && widget.entry!.type == type &&
         !result.contains(widget.entry!.category)) {
       result.add(widget.entry!.category);
@@ -569,7 +570,8 @@ class _EntryEditorState extends State<EntryEditor> {
   void initState() {
     super.initState();
     type = widget.entry?.type ?? widget.initialType;
-    category = widget.entry?.category ?? (type == 'income' ? incomes.first : expenses.first);
+    category = widget.entry?.category ??
+        (type == 'income' ? widget.extraIncomes.first : widget.extraExpenses.first);
     account = widget.entry?.account ?? 'Cash';
     date = widget.entry?.date ?? DateTime.now();
     final val = widget.entry?.cents;
@@ -625,7 +627,8 @@ class _EntryEditorState extends State<EntryEditor> {
             ButtonSegment(value: 'income', label: Text('Income'), icon: Icon(Icons.add))],
             selected: {type}, onSelectionChanged: (newType) => setState(() {
               type = newType.first;
-              category = type == 'income' ? incomes.first : expenses.first;
+              category = type == 'income'
+                  ? widget.extraIncomes.first : widget.extraExpenses.first;
             })),
           const SizedBox(height: 14),
           TextFormField(controller: amount, autofocus: widget.entry == null,
@@ -859,7 +862,11 @@ class _SettingsPageState extends State<SettingsPage> {
   }
   Future<void> manageCatalog(String kind, String title) async {
     final name = TextEditingController();
-    var items = await MoneyDatabase.instance.catalogItems(kind);
+    final database = MoneyDatabase.instance;
+    if (kind == 'expense_category' || kind == 'income_category') {
+      await database.ensureDefaultCategories(expenses, incomes);
+    }
+    var items = await database.catalogItems(kind);
     if (!mounted) return;
     await showDialog<void>(context: context, builder: (dialogContext) =>
       StatefulBuilder(builder: (context, setDialogState) => AlertDialog(
@@ -872,9 +879,9 @@ class _SettingsPageState extends State<SettingsPage> {
               IconButton(tooltip: 'Add', icon: const Icon(Icons.add_circle),
                 onPressed: () async {
                   try {
-                    await MoneyDatabase.instance.saveCatalogItem(kind, name.text);
+                    await database.saveCatalogItem(kind, name.text);
                     name.clear();
-                    items = await MoneyDatabase.instance.catalogItems(kind);
+                    items = await database.catalogItems(kind);
                     setDialogState(() {});
                     await CloudSyncService.instance.localChanged();
                   } catch (e) { msg('Could not add item: $e'); }
@@ -882,7 +889,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ]),
             const SizedBox(height: 8),
             SizedBox(height: 250, child: items.isEmpty
-              ? const Center(child: Text('No custom items yet.'))
+              ? const Center(child: Text('No items yet.'))
               : ListView.separated(itemCount: items.length,
                 separatorBuilder: (_, __) => const Divider(height: 1),
                 itemBuilder: (context, index) {
@@ -905,8 +912,8 @@ class _SettingsPageState extends State<SettingsPage> {
                               ]));
                           if (renamed == null) return;
                           try {
-                            await MoneyDatabase.instance.saveCatalogItem(kind, renamed, id: id);
-                            items = await MoneyDatabase.instance.catalogItems(kind);
+                            await database.saveCatalogItem(kind, renamed, id: id);
+                            items = await database.catalogItems(kind);
                             setDialogState(() {});
                             await CloudSyncService.instance.localChanged();
                           } catch (e) { msg('Could not rename item: $e'); }
@@ -914,8 +921,74 @@ class _SettingsPageState extends State<SettingsPage> {
                       IconButton(tooltip: 'Delete', icon: const Icon(Icons.delete_outline, color: red),
                         onPressed: () async {
                           try {
-                            await MoneyDatabase.instance.deleteCatalogItem(kind, id);
-                            items = await MoneyDatabase.instance.catalogItems(kind);
+                            String? replacementId;
+                            if (kind == 'expense_category' ||
+                                kind == 'income_category') {
+                              final replacements = items.where(
+                                (candidate) => candidate['id'] != id).toList();
+                              if (replacements.isEmpty) return;
+                              replacementId = await showDialog<String>(
+                                context: context,
+                                builder: (ctx) {
+                                  var selectedId =
+                                      replacements.first['id'] as String;
+                                  return StatefulBuilder(
+                                    builder: (ctx, setChoiceState) =>
+                                      AlertDialog(
+                                        title: const Text('Move transactions'),
+                                        content: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              'Choose a category for existing '
+                                              '${kind == 'expense_category' ? 'expenses' : 'income'} '
+                                              'in "$itemName". Then the old category will be deleted.',
+                                            ),
+                                            const SizedBox(height: 12),
+                                            DropdownButtonFormField<String>(
+                                              value: selectedId,
+                                              items: [
+                                                for (final replacement
+                                                    in replacements)
+                                                  DropdownMenuItem(
+                                                    value: replacement['id']
+                                                        as String,
+                                                    child: Text(replacement[
+                                                        'name'] as String),
+                                                  ),
+                                              ],
+                                              onChanged: (value) {
+                                                if (value != null) {
+                                                  setChoiceState(() =>
+                                                      selectedId = value);
+                                                }
+                                              },
+                                            ),
+                                          ],
+                                        ),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () =>
+                                                Navigator.pop(ctx),
+                                            child: const Text('Cancel'),
+                                          ),
+                                          FilledButton(
+                                            onPressed: () =>
+                                                Navigator.pop(ctx, selectedId),
+                                            child: const Text('Move & delete'),
+                                          ),
+                                        ],
+                                      ),
+                                  );
+                                },
+                              );
+                              if (replacementId == null) return;
+                            }
+                            await database.deleteCatalogItem(kind, id,
+                              replacementId: replacementId);
+                            items = await database.catalogItems(kind);
                             setDialogState(() {});
                             await CloudSyncService.instance.localChanged();
                           } catch (e) { msg('Could not delete item: $e'); }

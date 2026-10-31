@@ -10,6 +10,8 @@
 
 - Android Flutter material-3 interface with income/expense add, edit, delete.
 - Category donut chart, month filter, account filter, running balance.
+- Add, rename, and remove income or expense categories. Removing a category
+  asks which category should receive its existing transactions before deletion.
 - On-device SQLite with a migration-safe, durable sync outbox.
 - Google sign-in and per-user Firestore synchronization. Sign into the same
   Google account on another device to download its transactions and categories.

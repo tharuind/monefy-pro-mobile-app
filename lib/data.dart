@@ -267,6 +267,33 @@ class MoneyDatabase {
   Future<List<String>> catalogNames(String kind) async =>
     (await catalogItems(kind)).map((item) => item['name'] as String).toList();
 
+  Future<void> ensureDefaultCategories(
+      List<String> expenseNames, List<String> incomeNames) async {
+    final d = await db;
+    await d.transaction((tx) async {
+      final initialized = await tx.query('metadata', where: 'key = ?',
+        whereArgs: ['builtin_categories_initialized'], limit: 1);
+      if (initialized.isNotEmpty) return;
+      const timestamp = '1970-01-01T00:00:00.000Z';
+      for (final entry in [
+        for (final name in expenseNames) ('expense_category', name),
+        for (final name in incomeNames) ('income_category', name),
+      ]) {
+        final id = 'builtin:${entry.$1}:${entry.$2}';
+        final exists = await tx.query('catalog_items', where:
+          'id = ? OR (kind = ? AND name = ? AND deleted_at IS NULL)',
+          whereArgs: [id, entry.$1, entry.$2], limit: 1);
+        if (exists.isEmpty) {
+          await tx.insert('catalog_items', {'id': id, 'kind': entry.$1,
+            'name': entry.$2, 'updated_at': timestamp, 'deleted_at': null});
+        }
+      }
+      await tx.insert('metadata', {
+        'key': 'builtin_categories_initialized', 'value': 'yes',
+      });
+    });
+  }
+
   Future<void> saveCatalogItem(String kind, String name, {String? id}) async {
     final d = await db;
     final cleaned = name.trim();
@@ -326,13 +353,46 @@ class MoneyDatabase {
     });
   }
 
-  Future<void> deleteCatalogItem(String kind, String id) async {
+  Future<void> deleteCatalogItem(String kind, String id,
+      {String? replacementId}) async {
     final d = await db;
     await d.transaction((tx) async {
       final rows = await tx.query('catalog_items', where: 'id = ? AND kind = ?',
         whereArgs: [id, kind], limit: 1);
       if (rows.isEmpty) return;
       final timestamp = DateTime.now().toUtc().toIso8601String();
+      if (kind == 'expense_category' || kind == 'income_category') {
+        if (replacementId == null || replacementId == id) {
+          throw ArgumentError('Choose another category for existing transactions.');
+        }
+        final replacementRows = await tx.query('catalog_items',
+          where: 'id = ? AND kind = ? AND deleted_at IS NULL',
+          whereArgs: [replacementId, kind], limit: 1);
+        if (replacementRows.isEmpty) {
+          throw StateError('The selected replacement category is no longer available.');
+        }
+        final sourceName = rows.first['name'] as String;
+        final replacementName = replacementRows.first['name'] as String;
+        final type = kind == 'expense_category' ? 'expense' : 'income';
+        final entries = await tx.query('entries',
+          where: 'category = ? AND type = ?',
+          whereArgs: [sourceName, type]);
+        await tx.update('entries',
+          {'category': replacementName, 'updated_at': timestamp},
+          where: 'category = ? AND type = ?',
+          whereArgs: [sourceName, type]);
+        final device = await deviceId(tx);
+        for (final row in entries) {
+          final entry = MoneyEntry.fromMap(row);
+          if (entry.cloudId == null) continue;
+          final updated = MoneyEntry(id: entry.id, cloudId: entry.cloudId,
+            cents: entry.cents, type: entry.type, category: replacementName,
+            account: entry.account, note: entry.note, date: entry.date,
+            updatedAt: DateTime.parse(timestamp), deletedAt: entry.deletedAt);
+          await _queue(tx, 'transaction', entry.cloudId!, 'upsert',
+            updated.toCloudMap(device));
+        }
+      }
       await tx.update('catalog_items', {'updated_at': timestamp, 'deleted_at': timestamp},
         where: 'id = ?', whereArgs: [id]);
       await _queue(tx, kind, id, 'upsert', {'id': id, 'kind': kind,
