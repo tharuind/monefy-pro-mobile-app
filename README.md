@@ -270,8 +270,9 @@ APK location: `build/app/outputs/flutter-apk/app-debug.apk`.
 ### Important backup notes
 
 - Settings → **Email encrypted backup** prompts for a backup passphrase of at
-  least 10 characters; it opens the Android share dialog. You must choose Gmail,
-  enter your own email address, and tap Send.
+  least 10 characters. On Android, choose Gmail in the share dialog. In a
+  browser, the encrypted `.mymoney` file downloads and an email draft opens;
+  attach the downloaded file yourself before sending.
 - Settings → **Restore encrypted backup** reads a `.mymoney` file and asks for
   its original passphrase; valid records merge without clearing existing data.
 - If the backup password is forgotten, its contents cannot be decrypted.

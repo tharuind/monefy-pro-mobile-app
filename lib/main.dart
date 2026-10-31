@@ -1,14 +1,13 @@
 import 'dart:math' as math;
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:local_auth/local_auth.dart';
-import 'package:share_plus/share_plus.dart';
 
+import 'backup_delivery.dart';
 import 'cloud_sync.dart';
 import 'data.dart';
 
@@ -728,12 +727,37 @@ class _SettingsPageState extends State<SettingsPage> {
       final json = await MoneyDatabase.instance.backupJson();
       final encrypted = await BackupTools.encryptedText(json, password);
       final filename = 'My-Money-${DateTime.now().toUtc().toIso8601String().replaceAll(':', '-')}.mymoney';
-      await SharePlus.instance.share(ShareParams(
-        files: [XFile.fromData(Uint8List.fromList(utf8.encode(encrypted)),
-          name: filename, mimeType: 'application/octet-stream')],
-        subject: 'My Money encrypted backup',
-        text: 'Encrypted My Money backup. Keep the backup password separate and private.'));
-      msg('Choose Gmail and send the attached backup to your own address.');
+      if (kIsWeb) {
+        await downloadEncryptedBackup(filename: filename, contents: encrypted);
+        if (!mounted) return;
+        final openEmail = await showDialog<bool>(context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Encrypted backup downloaded'),
+            content: const Text(
+              'Your .mymoney file is saved in Downloads. Attach it to the email '
+              'draft; the browser cannot attach files automatically. Keep the '
+              'backup password separate and private.'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Close')),
+              FilledButton.icon(
+                onPressed: () {
+                  openBackupEmailDraft();
+                  Navigator.pop(ctx, true);
+                },
+                icon: const Icon(Icons.email_outlined),
+                label: const Text('Open email'),
+              ),
+            ],
+          ));
+        if (openEmail == true) {
+          openBackupEmailDraft();
+          msg('Attach the downloaded .mymoney file before sending.');
+        }
+      } else {
+        await shareEncryptedBackup(filename: filename, contents: encrypted);
+        msg('Choose Gmail and send the attached backup to your own address.');
+      }
     } catch (e) {
       msg('Backup failed: $e');
     } finally {
@@ -979,7 +1003,9 @@ class _SettingsPageState extends State<SettingsPage> {
       Card(child: Column(children: [
         ListTile(enabled: !busy, leading: const Icon(Icons.mail_outline),
           title: const Text('Email encrypted backup'),
-          subtitle: const Text('Creates an encrypted file and opens Gmail/share sheet.'),
+          subtitle: Text(kIsWeb
+            ? 'Downloads an encrypted file and opens an email draft. Attach the file before sending.'
+            : 'Creates an encrypted file and opens the share sheet. Choose Gmail to send it.'),
           trailing: const Icon(Icons.chevron_right), onTap: emailBackup),
         const Divider(height: 1),
         ListTile(enabled: !busy, leading: const Icon(Icons.restore),
