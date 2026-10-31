@@ -256,7 +256,6 @@ class CloudSyncService extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    final pendingCount = await MoneyDatabase.instance.pendingCount();
     if (_running) {
       await _syncInFlight?.future;
       return;
